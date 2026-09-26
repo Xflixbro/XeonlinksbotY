@@ -2,7 +2,11 @@
 # Feedback / Live Support System (Livegram-style)
 # Users message the bot → admins see it → admins reply back
 # + AUTO-DELETE admin replies after a configurable timer
-# Command: /livegram_autodelete
+# + RESTRICTED content (anti-forward / anti-save)
+# Commands:
+#   /feedback
+#   /livegram_autodelete <seconds|off>
+#   /livegram_rstrmsg on|off
 # ──────────────────────────────────────────────────────────────
 
 import asyncio
@@ -66,6 +70,24 @@ async def set_auto_delete_timer(seconds: int):
     )
 
 
+# ══════════════════ RESTRICT MESSAGE ══════════════════
+async def is_restrict_enabled() -> bool:
+    """Return True if content protection is enabled."""
+    doc = await feedback_settings.find_one({'_id': 'config'})
+    if doc:
+        return bool(doc.get('restrict_content', False))
+    return False
+
+
+async def set_restrict_enabled(enabled: bool):
+    await feedback_settings.update_one(
+        {'_id': 'config'},
+        {'$set': {'restrict_content': bool(enabled), 'updated_at': datetime.utcnow()}},
+        upsert=True
+    )
+
+
+# ══════════════════ AUTO-DELETE HELPER ══════════════════
 async def auto_delete_message(client: Client, chat_id: int, message_id: int, delay: int):
     """Wait `delay` seconds then delete the message."""
     await asyncio.sleep(delay)
@@ -176,31 +198,43 @@ async def admin_to_user(client: Client, message: Message):
     if not target_user_id:
         return
 
-    # Get current auto-delete timer
+    # Read current settings
     auto_delete_secs = await get_auto_delete_timer()
+    restrict = await is_restrict_enabled()
 
     try:
-        # Send the reply to the user
-        sent_to_user = await message.copy(target_user_id)
+        # Copy the message to the user.
+        # protect_content=True → user cannot forward / save / copy
+        try:
+            if restrict:
+                sent_to_user = await message.copy(
+                    target_user_id,
+                    protect_content=True
+                )
+            else:
+                sent_to_user = await message.copy(target_user_id)
+        except TypeError:
+            # Fallback for older Pyrogram versions
+            sent_to_user = await message.copy(target_user_id)
 
-        # Schedule auto-delete of the SENT message in the USER'S chat
+        # Auto-delete the sent message in USER'S chat
         if auto_delete_secs > 0:
             asyncio.create_task(
                 auto_delete_message(client, target_user_id, sent_to_user.id, auto_delete_secs)
             )
 
-        # Build confirmation text
-        if auto_delete_secs > 0:
-            confirm_text = (
-                f"<b>✅ Reply delivered to user <code>{target_user_id}</code></b>\n"
-                f"<b>🗑️ Auto-delete in:</b> <code>{auto_delete_secs}s</code>"
-            )
+        # Build confirmation
+        parts = [f"<b>✅ Reply delivered to user <code>{target_user_id}</code></b>"]
+        if restrict:
+            parts.append("<b>🔒 Content:</b> <code>PROTECTED</code>")
         else:
-            confirm_text = f"<b>✅ Reply delivered to user <code>{target_user_id}</code></b>"
+            parts.append("<b>🔓 Content:</b> <code>Normal</code>")
+        if auto_delete_secs > 0:
+            parts.append(f"<b>🗑️ Auto-delete in:</b> <code>{auto_delete_secs}s</code>")
 
-        confirm_msg = await message.reply_text(confirm_text, quote=True)
+        confirm_msg = await message.reply_text("\n".join(parts), quote=True)
 
-        # Also auto-delete the confirmation after 8 seconds
+        # Auto-delete the confirmation after 8 seconds
         asyncio.create_task(
             auto_delete_message(client, message.chat.id, confirm_msg.id, 8)
         )
@@ -325,3 +359,56 @@ async def livegram_autodelete_cmd(client: Client, message: Message):
         )
     except ValueError:
         await message.reply_text("<b>❌ Invalid input. Use a number or 'off'.</b>")
+
+
+# ══════════════════ RESTRICT MESSAGE COMMAND ══════════════════
+@Client.on_message(filters.command('livegram_rstrmsg') & filters.private & ~filters.service)
+async def livegram_rstrmsg_cmd(client: Client, message: Message):
+    user = message.from_user
+    if not user:
+        return
+
+    is_auth = user.id == OWNER_ID or user.id in ADMINS or await is_admin(user.id)
+    if not is_auth:
+        return await message.reply_text("<b>❌ You are not authorized to use this command.</b>")
+
+    args = message.command[1:]
+    current = await is_restrict_enabled()
+
+    # Show current status
+    if not args:
+        status = "🔒 ᴏɴ (ᴘʀᴏᴛᴇᴄᴛᴇᴅ)" if current else "🔓 ᴏꜰꜰ (ɴᴏʀᴍᴀʟ)"
+        return await message.reply_text(
+            f"<b>🔒 ʀᴇꜱᴛʀɪᴄᴛᴇᴅ ᴍᴇꜱꜱᴀɢᴇ ꜱʏꜱᴛᴇᴍ</b>\n\n"
+            f"<b>ᴄᴜʀʀᴇɴᴛ:</b> {status}\n\n"
+            f"<b>ᴜꜱᴀɢᴇ:</b>\n"
+            f"• <code>/livegram_rstrmsg on</code> — Enable (users can't forward/save)\n"
+            f"• <code>/livegram_rstrmsg off</code> — Disable (normal)\n"
+            f"• <code>/livegram_rstrmsg</code> — Show current status\n\n"
+            f"<i>💡 When enabled, messages you send to users\nwill be protected from forwarding & saving.</i>"
+        )
+
+    cmd = args[0].lower()
+
+    if cmd in ['on', 'enable', 'true', '1']:
+        await set_restrict_enabled(True)
+        return await message.reply_text(
+            "<b>🔒 Restricted message mode ENABLED.</b>\n\n"
+            "<i>Users will NOT be able to forward, save, or copy\n"
+            "the messages you send to them.</i>"
+        )
+
+    elif cmd in ['off', 'disable', 'false', '0']:
+        await set_restrict_enabled(False)
+        return await message.reply_text(
+            "<b>🔓 Restricted message mode DISABLED.</b>\n\n"
+            "<i>Users can forward & save messages normally.</i>"
+        )
+
+    else:
+        return await message.reply_text(
+            "<b>❌ Invalid option.</b>\n\n"
+            "<b>Usage:</b>\n"
+            "• <code>/livegram_rstrmsg on</code>\n"
+            "• <code>/livegram_rstrmsg off</code>"
+        )
