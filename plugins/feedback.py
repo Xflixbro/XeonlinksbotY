@@ -1,6 +1,8 @@
 # ──────────────────────────────────────────────────────────────
 # Feedback / Live Support System (Livegram-style)
 # Users message the bot → admins see it → admins reply back
+# + AUTO-DELETE admin replies after a configurable timer
+# Command: /livegram_autodelete
 # ──────────────────────────────────────────────────────────────
 
 import asyncio
@@ -45,6 +47,33 @@ async def set_feedback_enabled(enabled: bool):
         {'$set': {'enabled': enabled, 'updated_at': datetime.utcnow()}},
         upsert=True
     )
+
+
+# ══════════════════ AUTO-DELETE TIMER ══════════════════
+async def get_auto_delete_timer() -> int:
+    """Return auto-delete seconds. 0 = disabled."""
+    doc = await feedback_settings.find_one({'_id': 'config'})
+    if doc:
+        return int(doc.get('auto_delete_seconds', 0))
+    return 0
+
+
+async def set_auto_delete_timer(seconds: int):
+    await feedback_settings.update_one(
+        {'_id': 'config'},
+        {'$set': {'auto_delete_seconds': int(seconds), 'updated_at': datetime.utcnow()}},
+        upsert=True
+    )
+
+
+async def auto_delete_message(client: Client, chat_id: int, message_id: int, delay: int):
+    """Wait `delay` seconds then delete the message."""
+    await asyncio.sleep(delay)
+    try:
+        await client.delete_messages(chat_id, message_id)
+        LOGGER(__name__).info(f"[AutoDelete] Deleted msg {message_id} in chat {chat_id}")
+    except Exception as e:
+        LOGGER(__name__).warning(f"[AutoDelete] Failed: {e}")
 
 
 # ══════════════════ MAPPING HELPERS ══════════════════
@@ -147,12 +176,35 @@ async def admin_to_user(client: Client, message: Message):
     if not target_user_id:
         return
 
+    # Get current auto-delete timer
+    auto_delete_secs = await get_auto_delete_timer()
+
     try:
-        await message.copy(target_user_id)
-        await message.reply_text(
-            f"<b>✅ Reply delivered to user <code>{target_user_id}</code></b>",
-            quote=True
+        # Send the reply to the user
+        sent_to_user = await message.copy(target_user_id)
+
+        # Schedule auto-delete of the SENT message in the USER'S chat
+        if auto_delete_secs > 0:
+            asyncio.create_task(
+                auto_delete_message(client, target_user_id, sent_to_user.id, auto_delete_secs)
+            )
+
+        # Build confirmation text
+        if auto_delete_secs > 0:
+            confirm_text = (
+                f"<b>✅ Reply delivered to user <code>{target_user_id}</code></b>\n"
+                f"<b>🗑️ Auto-delete in:</b> <code>{auto_delete_secs}s</code>"
+            )
+        else:
+            confirm_text = f"<b>✅ Reply delivered to user <code>{target_user_id}</code></b>"
+
+        confirm_msg = await message.reply_text(confirm_text, quote=True)
+
+        # Also auto-delete the confirmation after 8 seconds
+        asyncio.create_task(
+            auto_delete_message(client, message.chat.id, confirm_msg.id, 8)
         )
+
     except UserIsBlocked:
         await message.reply_text("<b>❌ User has blocked the bot.</b>")
     except InputUserDeactivated:
@@ -221,3 +273,55 @@ async def feedback_cmd(client: Client, message: Message):
         )
     else:
         await message.reply_text("<b>❓ Unknown option. Use /feedback for help.</b>")
+
+
+# ══════════════════ AUTO-DELETE COMMAND ══════════════════
+@Client.on_message(filters.command('livegram_autodelete') & filters.private & ~filters.service)
+async def livegram_autodelete_cmd(client: Client, message: Message):
+    user = message.from_user
+    if not user:
+        return
+
+    is_auth = user.id == OWNER_ID or user.id in ADMINS or await is_admin(user.id)
+    if not is_auth:
+        return await message.reply_text("<b>❌ You are not authorized to use this command.</b>")
+
+    args = message.command[1:]
+    current = await get_auto_delete_timer()
+
+    # Show current status
+    if not args:
+        if current > 0:
+            status = f"<code>{current}</code> seconds"
+        else:
+            status = "❌ ᴅɪꜱᴀʙʟᴇᴅ"
+        return await message.reply_text(
+            f"<b>🗑️ ᴀᴜᴛᴏ-ᴅᴇʟᴇᴛᴇ ꜱʏꜱᴛᴇᴍ</b>\n\n"
+            f"<b>ᴄᴜʀʀᴇɴᴛ:</b> {status}\n\n"
+            f"<b>ᴜꜱᴀɢᴇ:</b>\n"
+            f"• <code>/livegram_autodelete &lt;seconds&gt;</code> — Set timer\n"
+            f"• <code>/livegram_autodelete off</code> — Disable auto-delete\n"
+            f"• <code>/livegram_autodelete</code> — Show current status\n\n"
+            f"<i>💡 When enabled, admin replies sent to users\nwill auto-delete after the set time.</i>"
+        )
+
+    cmd = args[0].lower()
+
+    if cmd in ['off', 'disable', '0']:
+        await set_auto_delete_timer(0)
+        return await message.reply_text("<b>✅ Auto-delete DISABLED.</b>")
+
+    try:
+        secs = int(cmd)
+        if secs < 5:
+            return await message.reply_text("<b>❌ Minimum timer is 5 seconds.</b>")
+        if secs > 86400:
+            return await message.reply_text("<b>❌ Maximum timer is 86400 seconds (24 hours).</b>")
+
+        await set_auto_delete_timer(secs)
+        await message.reply_text(
+            f"<b>✅ Auto-delete timer set to <code>{secs}</code> seconds.</b>\n\n"
+            f"<i>Admin replies will now auto-delete after {secs}s.</i>"
+        )
+    except ValueError:
+        await message.reply_text("<b>❌ Invalid input. Use a number or 'off'.</b>")
