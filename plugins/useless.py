@@ -12,7 +12,7 @@ ADMIN_COMMANDS = [
     "bulklink", "genlink", "channels",
     "status", "cancel", "broadcast",
     "add_fsub", "del_fsub", "fsub",
-    "stats", "ban", "feedback"
+    "stats", "ban", "feedback", "livegram_autodelete"
 ]
 
 
