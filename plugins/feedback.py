@@ -3,10 +3,6 @@
 # Users message the bot → admins see it → admins reply back
 # + AUTO-DELETE admin replies after a configurable timer
 # + RESTRICTED content (anti-forward / anti-save)
-# Commands:
-#   /feedback
-#   /livegram_autodelete <seconds|off>
-#   /livegram_rstrmsg on|off
 # ──────────────────────────────────────────────────────────────
 
 import asyncio
@@ -161,19 +157,12 @@ async def user_to_admin(client: Client, message: Message):
         forwarded = await message.forward(admin_chat)
         await save_map(forwarded.id, admin_chat, user.id)
 
-        await message.reply_text(
-            "<b>✅ Your message has been delivered to the admin.</b>\n"
-            "<i>You will receive a reply soon.</i>"
-        )
+        # ── No confirmation reply sent to the user (silent delivery) ──
 
     except FloodWait as e:
         await asyncio.sleep(e.value)
-        await message.reply_text("<b>⚠️ Please try again in a moment.</b>")
     except Exception as e:
         LOGGER(__name__).error(f"[Feedback] Forward failed: {e}")
-        await message.reply_text(
-            "<b>❌ Failed to deliver your message. Please try again later.</b>"
-        )
 
 
 # ══════════════════ ADMIN  →  USER ══════════════════
@@ -198,13 +187,10 @@ async def admin_to_user(client: Client, message: Message):
     if not target_user_id:
         return
 
-    # Read current settings
     auto_delete_secs = await get_auto_delete_timer()
     restrict = await is_restrict_enabled()
 
     try:
-        # Copy the message to the user.
-        # protect_content=True → user cannot forward / save / copy
         try:
             if restrict:
                 sent_to_user = await message.copy(
@@ -214,16 +200,13 @@ async def admin_to_user(client: Client, message: Message):
             else:
                 sent_to_user = await message.copy(target_user_id)
         except TypeError:
-            # Fallback for older Pyrogram versions
             sent_to_user = await message.copy(target_user_id)
 
-        # Auto-delete the sent message in USER'S chat
         if auto_delete_secs > 0:
             asyncio.create_task(
                 auto_delete_message(client, target_user_id, sent_to_user.id, auto_delete_secs)
             )
 
-        # Build confirmation
         parts = [f"<b>✅ Reply delivered to user <code>{target_user_id}</code></b>"]
         if restrict:
             parts.append("<b>🔒 Content:</b> <code>PROTECTED</code>")
@@ -234,7 +217,6 @@ async def admin_to_user(client: Client, message: Message):
 
         confirm_msg = await message.reply_text("\n".join(parts), quote=True)
 
-        # Auto-delete the confirmation after 8 seconds
         asyncio.create_task(
             auto_delete_message(client, message.chat.id, confirm_msg.id, 8)
         )
@@ -323,7 +305,6 @@ async def livegram_autodelete_cmd(client: Client, message: Message):
     args = message.command[1:]
     current = await get_auto_delete_timer()
 
-    # Show current status
     if not args:
         if current > 0:
             status = f"<code>{current}</code> seconds"
@@ -375,7 +356,6 @@ async def livegram_rstrmsg_cmd(client: Client, message: Message):
     args = message.command[1:]
     current = await is_restrict_enabled()
 
-    # Show current status
     if not args:
         status = "🔒 ᴏɴ (ᴘʀᴏᴛᴇᴄᴛᴇᴅ)" if current else "🔓 ᴏꜰꜰ (ɴᴏʀᴍᴀʟ)"
         return await message.reply_text(
