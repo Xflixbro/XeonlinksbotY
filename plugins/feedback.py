@@ -1,0 +1,223 @@
+# ──────────────────────────────────────────────────────────────
+# Feedback / Live Support System (Livegram-style)
+# Users message the bot → admins see it → admins reply back
+# ──────────────────────────────────────────────────────────────
+
+import asyncio
+from datetime import datetime
+from pyrogram import Client, filters
+from pyrogram.types import Message
+from pyrogram.errors import FloodWait, UserIsBlocked, InputUserDeactivated
+from config import OWNER_ID, ADMINS, LOGGER
+from database.database import database, is_admin, add_user
+
+# ───────────── Collections ─────────────
+feedback_map = database['feedback_map']
+feedback_settings = database['feedback_settings']
+
+
+# ══════════════════ SETTINGS HELPERS ══════════════════
+async def get_feedback_admin() -> int:
+    doc = await feedback_settings.find_one({'_id': 'config'})
+    if doc and doc.get('admin_chat_id'):
+        return doc['admin_chat_id']
+    return OWNER_ID
+
+
+async def set_feedback_admin(chat_id: int):
+    await feedback_settings.update_one(
+        {'_id': 'config'},
+        {'$set': {'admin_chat_id': chat_id, 'updated_at': datetime.utcnow()}},
+        upsert=True
+    )
+
+
+async def is_feedback_enabled() -> bool:
+    doc = await feedback_settings.find_one({'_id': 'config'})
+    if doc:
+        return doc.get('enabled', True)
+    return True
+
+
+async def set_feedback_enabled(enabled: bool):
+    await feedback_settings.update_one(
+        {'_id': 'config'},
+        {'$set': {'enabled': enabled, 'updated_at': datetime.utcnow()}},
+        upsert=True
+    )
+
+
+# ══════════════════ MAPPING HELPERS ══════════════════
+async def save_map(admin_msg_id: int, admin_chat_id: int, user_id: int):
+    await feedback_map.update_one(
+        {'admin_msg_id': admin_msg_id, 'admin_chat_id': admin_chat_id},
+        {'$set': {
+            'admin_msg_id': admin_msg_id,
+            'admin_chat_id': admin_chat_id,
+            'user_id': user_id,
+            'created_at': datetime.utcnow()
+        }},
+        upsert=True
+    )
+
+
+async def get_user_from_reply(admin_msg_id: int, admin_chat_id: int):
+    doc = await feedback_map.find_one({
+        'admin_msg_id': admin_msg_id,
+        'admin_chat_id': admin_chat_id
+    })
+    return doc['user_id'] if doc else None
+
+
+# ══════════════════ USER  →  ADMIN ══════════════════
+@Client.on_message(filters.private & filters.incoming & ~filters.service, group=-3)
+async def user_to_admin(client: Client, message: Message):
+    user = message.from_user
+    if not user:
+        return
+
+    if message.text and message.text.startswith('/'):
+        return
+
+    if user.id == OWNER_ID or user.id in ADMINS or await is_admin(user.id):
+        return
+
+    if not await is_feedback_enabled():
+        return
+
+    try:
+        await add_user(user.id)
+    except Exception:
+        pass
+
+    admin_chat = await get_feedback_admin()
+
+    name = f"{user.first_name or ''} {user.last_name or ''}".strip() or "Unknown"
+    username = f"@{user.username}" if user.username else "N/A"
+    dc = user.dc_id if user.dc_id else "N/A"
+
+    header = (
+        "<b>📩 ɴᴇᴡ ᴍᴇꜱꜱᴀɢᴇ ꜰʀᴏᴍ ᴜꜱᴇʀ</b>\n\n"
+        f"<b>👤 ɴᴀᴍᴇ:</b> {name}\n"
+        f"<b>🆔 ᴜꜱᴇʀ ɪᴅ:</b> <code>{user.id}</code>\n"
+        f"<b>🔗 ᴜꜱᴇʀɴᴀᴍᴇ:</b> {username}\n"
+        f"<b>🌎 ᴅᴄ:</b> {dc}\n\n"
+        "<i>↩️ Reply to the message below to respond.</i>"
+    )
+
+    try:
+        await client.send_message(admin_chat, header)
+        forwarded = await message.forward(admin_chat)
+        await save_map(forwarded.id, admin_chat, user.id)
+
+        await message.reply_text(
+            "<b>✅ Your message has been delivered to the admin.</b>\n"
+            "<i>You will receive a reply soon.</i>"
+        )
+
+    except FloodWait as e:
+        await asyncio.sleep(e.value)
+        await message.reply_text("<b>⚠️ Please try again in a moment.</b>")
+    except Exception as e:
+        LOGGER(__name__).error(f"[Feedback] Forward failed: {e}")
+        await message.reply_text(
+            "<b>❌ Failed to deliver your message. Please try again later.</b>"
+        )
+
+
+# ══════════════════ ADMIN  →  USER ══════════════════
+@Client.on_message(
+    (filters.private | filters.group) & filters.incoming & filters.reply & ~filters.service,
+    group=-2
+)
+async def admin_to_user(client: Client, message: Message):
+    user = message.from_user
+    if not user:
+        return
+
+    is_auth = user.id == OWNER_ID or user.id in ADMINS or await is_admin(user.id)
+    if not is_auth:
+        return
+
+    reply_to = message.reply_to_message
+    if not reply_to:
+        return
+
+    target_user_id = await get_user_from_reply(reply_to.id, message.chat.id)
+    if not target_user_id:
+        return
+
+    try:
+        await message.copy(target_user_id)
+        await message.reply_text(
+            f"<b>✅ Reply delivered to user <code>{target_user_id}</code></b>",
+            quote=True
+        )
+    except UserIsBlocked:
+        await message.reply_text("<b>❌ User has blocked the bot.</b>")
+    except InputUserDeactivated:
+        await message.reply_text("<b>❌ User account is deactivated.</b>")
+    except FloodWait as e:
+        await asyncio.sleep(e.value)
+        await message.reply_text("<b>⚠️ Flood wait, try again.</b>")
+    except Exception as e:
+        LOGGER(__name__).error(f"[Feedback] Reply delivery failed: {e}")
+        await message.reply_text(f"<b>❌ Failed to deliver: {e}</b>")
+
+
+# ══════════════════ MANAGEMENT COMMAND ══════════════════
+@Client.on_message(filters.command('feedback') & filters.private & ~filters.service)
+async def feedback_cmd(client: Client, message: Message):
+    user = message.from_user
+    if not user:
+        return
+
+    is_auth = user.id == OWNER_ID or user.id in ADMINS or await is_admin(user.id)
+    if not is_auth:
+        return await message.reply_text("<b>❌ You are not authorized to use this command.</b>")
+
+    args = message.command[1:]
+    enabled = await is_feedback_enabled()
+    admin_chat = await get_feedback_admin()
+
+    if not args:
+        status = "✅ ᴏɴ" if enabled else "❌ ᴏꜰꜰ"
+        return await message.reply_text(
+            f"<b>📢 ꜰᴇᴇᴅʙᴀᴄᴋ ꜱʏꜱᴛᴇᴍ</b>\n\n"
+            f"<b>ꜱᴛᴀᴛᴜꜱ:</b> {status}\n"
+            f"<b>ᴀᴅᴍɪɴ ᴄʜᴀᴛ:</b> <code>{admin_chat}</code>\n\n"
+            f"<b>ᴜꜱᴀɢᴇ:</b>\n"
+            f"• <code>/feedback on</code> — Enable\n"
+            f"• <code>/feedback off</code> — Disable\n"
+            f"• <code>/feedback set &lt;chat_id&gt;</code> — Set destination chat\n"
+            f"• <code>/feedback status</code> — Show current status"
+        )
+
+    cmd = args[0].lower()
+
+    if cmd == 'on':
+        await set_feedback_enabled(True)
+        await message.reply_text("<b>✅ Feedback system enabled.</b>")
+
+    elif cmd == 'off':
+        await set_feedback_enabled(False)
+        await message.reply_text("<b>❌ Feedback system disabled.</b>")
+
+    elif cmd == 'set':
+        if len(args) < 2:
+            return await message.reply_text("<b>Usage:</b> <code>/feedback set &lt;chat_id&gt;</code>")
+        try:
+            cid = int(args[1])
+            await set_feedback_admin(cid)
+            await message.reply_text(f"<b>✅ Admin chat set to <code>{cid}</code></b>")
+        except ValueError:
+            await message.reply_text("<b>❌ Invalid chat ID.</b>")
+
+    elif cmd == 'status':
+        status = "✅ ᴏɴ" if enabled else "❌ ᴏꜰꜰ"
+        await message.reply_text(
+            f"<b>ꜱᴛᴀᴛᴜꜱ:</b> {status}\n"
+            f"<b>ᴀᴅᴍɪɴ ᴄʜᴀᴛ:</b> <code>{admin_chat}</code>"
+        )
+    else:
+        await message.reply_text("<b>❓ Unknown option. Use /feedback for help.</b>")
