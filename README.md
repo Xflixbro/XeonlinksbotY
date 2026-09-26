@@ -1,6 +1,6 @@
 <p align="center">
   <a href="https://github.com/Unrated-Coder/Unrated-LinkShare-Bot" target="_blank">
-    <img src="https://imgyx.pages.dev/Qzjvg" width="100%" style="border-radius: 20px; border: 3px solid #00BFFF; box-shadow: 0 8px 30px rgba(0, 191, 255, 0.4); transition: transform 0.3s ease-in-out;" alt="Unrated-LinkShare-Bot Header" />
+    <img src="https://imgyx.pages.dev/Qzjvg" width="100%" style="border-radius: 20px; border: 3px solid #00BFFF; box-shadow: 0 8px 30px rgba(0, 191, 255, 0.4);" alt="Unrated-LinkShare-Bot Header" />
   </a>
 </p>
 
@@ -19,10 +19,10 @@
   <img src="https://img.shields.io/badge/Framework-Pyrogram-9B30FF?style=flat-square&logo=telegram" />
 </p>
 
-<!-- Sleek Horizontal Navigation Menu (All Emojis Removed) -->
 <p align="center">
   • <a href="#overview">Overview</a> •
   <a href="#core-capabilities">Capabilities</a> •
+  <a href="#livegram-feedback-system">Livegram</a> •
   <a href="#system-workflow">Workflow</a> •
   <a href="#command-console">Console</a> •
   <a href="#environment-configuration">Configuration</a> •
@@ -31,13 +31,13 @@
   <a href="#instant-deployment">Deployment</a> •
 </p>
 
-<hr style="border: 0; height: 1px; background: linear-gradient(to right, rgba(0, 191, 255, 0), rgba(0, 191, 255, 0.75), rgba(0, 191, 255, 0)); margin: 30px 0;" />
+<hr/>
 
 ## Overview
 
-**LinkShareBot** is an enterprise-grade, high-performance Telegram native automation assistant designed to manage, store, and distribute Telegram channel links seamlessly. 
+**LinkShareBot** is an enterprise-grade, high-performance Telegram native automation assistant designed to manage, store, and distribute Telegram channel links seamlessly.
 
-Powered by **Pyrofork (Pyrogram)**, it secures your community traffic by automatically generating, monitoring, and revoking invite links. It features advanced utilities like Force Subscription gating, bulk generation pipelines, and automated join-request approval engines.
+Powered by **Pyrofork (Pyrogram)**, it secures your community traffic by automatically generating, monitoring, and revoking invite links. It features advanced utilities like Force Subscription gating, bulk generation pipelines, automated join-request approval engines, and a full **Livegram-style private feedback system** with content protection & auto-delete.
 
 ---
 
@@ -51,6 +51,80 @@ Powered by **Pyrofork (Pyrogram)**, it secures your community traffic by automat
 *   🔄 **Request Queue Manager** — Direct support for Join Request links with automated request monitoring.
 *   🛡️ **Force-Subscribe (FSub)** — Gate bot access by strictly requiring users to join your specified channels or request pools first.
 *   📊 **Analytics Dashboard** — Live system diagnostics, total active users, and database analytics at your fingertips.
+*   💬 **Livegram Feedback System** — Users DM the bot → messages forwarded to admin → admin replies back (Livegram-style).
+*   🗑️ **Auto-Delete Replies** — Admin replies to users can be scheduled to auto-delete after a custom timer.
+*   🔐 **Protected Content** — Prevent users from forwarding, saving, or copying admin replies with a single toggle.
+*   🧠 **Persistent Settings** — All feedback settings (timer, protection, admin chat) stored in MongoDB and survive restarts.
+
+---
+
+## Livegram Feedback System
+
+A full **Livegram-style anonymous support system** built into the bot. Users can message the bot privately — their messages are forwarded to the admin (or a designated group), and the admin replies by simply replying to the forwarded message.
+
+### Supported Content Types
+
+Every media type is forwarded automatically: **Text · Photo · Video · Audio · Voice · Document · Animation · Sticker · Video Note · Contact · Location · Poll**
+
+### What the Admin Sees
+
+```
+📩 ɴᴇᴡ ᴍᴇꜱꜱᴀɢᴇ ꜰʀᴏᴍ ᴜꜱᴇʀ
+
+👤 ɴᴀᴍᴇ: John Doe
+🆔 ᴜꜱᴇʀ ɪᴅ: 123456789
+🔗 ᴜꜱᴇʀɴᴀᴍᴇ: @johndoe
+🌎 ᴅᴄ: 2
+
+↩️ Reply to the message below to respond.
+```
+
+### Key Features
+
+| Feature | Description |
+| :--- | :--- |
+| **Anonymous Routing** | User identity is hidden from other users; only the admin sees details |
+| **All Media Types** | Text, photo, video, voice, document, animation, sticker, poll, location — everything works |
+| **Group Support** | Route feedback to a support group instead of the owner's DM |
+| **Auto-Delete Timer** | Admin replies can auto-delete after a set time (great for QR codes, expiring links) |
+| **Content Protection** | Prevent users from forwarding, saving, or copying admin replies |
+| **Crash-Safe** | Settings stored in MongoDB → persist even after bot restart |
+
+### Admin Commands
+
+| Command | Description |
+| :--- | :--- |
+| `/feedback` | Show feedback system status & help |
+| `/feedback on` | Enable the feedback system |
+| `/feedback off` | Disable the feedback system |
+| `/feedback set <chat_id>` | Route feedback to a specific group/channel |
+| `/feedback status` | Show current status & admin chat |
+| `/livegram_autodelete <seconds>` | Set auto-delete timer for admin replies |
+| `/livegram_autodelete off` | Disable auto-delete |
+| `/livegram_autodelete` | Show current auto-delete timer |
+| `/livegram_rstrmsg on` | 🔒 Enable content protection (anti-forward/save) |
+| `/livegram_rstrmsg off` | 🔓 Disable content protection |
+| `/livegram_rstrmsg` | Show current protection status |
+
+### Example Workflows
+
+**📱 Sending an expiring QR code:**
+
+```
+/livegram_autodelete 120
+/livegram_rstrmsg on
+```
+
+→ Reply to user's message with QR code
+→ QR deletes itself after 2 minutes
+→ User can't forward or save it
+
+**👥 Setting up a support group inbox:**
+
+1. Add the bot to your support group as admin
+2. Send `/feedback set -100xxxxxxxxxx`
+3. All user messages now route to the group
+4. Any admin in the group can reply to forward the reply back
 
 ---
 
@@ -63,11 +137,25 @@ graph TD
     B -- Verification Failed --> D[Access Restricted <br> Prompts Joining]
     C --> E[Invite Revoked <br> After 5 Mins]
 
+    F[User Sends Private Message] --> G{Livegram Enabled}
+    G -- Yes --> H[Forward to Admin Chat]
+    H --> I[Admin Replies]
+    I --> J{Auto-Delete ON}
+    J -- Yes --> K[Delete After Timer]
+    J -- No --> L[Message Stays]
+
     style A fill:#00BFFF,stroke:#00BFFF,stroke-width:2px,color:#090d16
     style B fill:#111827,stroke:#1f2937,stroke-width:2px,color:#f9fafb
     style C fill:#022c22,stroke:#10b981,stroke-width:2px,color:#34d399
     style D fill:#311010,stroke:#ef4444,stroke-width:2px,color:#f87171
     style E fill:#111827,stroke:#1f2937,stroke-width:2px,color:#9ca3af
+    style F fill:#00BFFF,stroke:#00BFFF,stroke-width:2px,color:#090d16
+    style G fill:#111827,stroke:#1f2937,stroke-width:2px,color:#f9fafb
+    style H fill:#1e3a8a,stroke:#3b82f6,stroke-width:2px,color:#93c5fd
+    style I fill:#1e3a8a,stroke:#3b82f6,stroke-width:2px,color:#93c5fd
+    style J fill:#111827,stroke:#1f2937,stroke-width:2px,color:#f9fafb
+    style K fill:#311010,stroke:#ef4444,stroke-width:2px,color:#f87171
+    style L fill:#022c22,stroke:#10b981,stroke-width:2px,color:#34d399
 ```
 
 ---
@@ -86,6 +174,32 @@ graph TD
 *   `/links` — Outputs all generated active channel links as a clean list format with pagination.
 *   `/bulklink <id1> <id2> ...` — Mass generates invite links for multiple channels instantly.
 *   `/genlink <link>` — Encodes and stores a custom link in the database channel and database, returning normal and request links.
+
+</details>
+
+<details>
+<summary><b>💬 Livegram Feedback System (Admins Only)</b></summary>
+<br>
+
+**Core Commands:**
+
+*   `/feedback` — Show feedback system status & help menu.
+*   `/feedback on` — Enable the Livegram-style feedback system.
+*   `/feedback off` — Disable the feedback system.
+*   `/feedback set <chat_id>` — Route incoming user messages to a specific group/channel (great for support groups).
+*   `/feedback status` — Show current status, admin chat, and enabled state.
+
+**Auto-Delete Timer:**
+
+*   `/livegram_autodelete <seconds>` — Set auto-delete timer for admin replies (min 5s, max 86400s).
+*   `/livegram_autodelete off` — Disable auto-delete (messages stay forever).
+*   `/livegram_autodelete` — Show current timer.
+
+**Content Protection:**
+
+*   `/livegram_rstrmsg on` — 🔒 Enable content protection (users can't forward, save, or copy).
+*   `/livegram_rstrmsg off` — 🔓 Disable content protection.
+*   `/livegram_rstrmsg` — Show current protection status.
 
 </details>
 
@@ -164,6 +278,7 @@ Configure the following environment variables inside your hosting platform setti
 Follow these steps to deploy a development instance of the bot locally:
 
 ### Prerequisites
+
 - Python 3.10 or higher
 - MongoDB (running instance)
 - Git installed on your system
