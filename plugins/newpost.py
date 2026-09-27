@@ -4,21 +4,35 @@ import base64
 from pyrogram import Client, filters
 from pyrogram.types import InlineKeyboardMarkup, InlineKeyboardButton, Message
 from pyrogram.errors import UserNotParticipant, FloodWait, ChatAdminRequired, RPCError
-from pyrogram.errors import InviteHashExpired, InviteRequestSent
-from database.database import save_channel, delete_channel, get_channels
+from pyrogram.errors import InviteHashExpired, InviteRequestSent, MessageNotModified, QueryIdInvalid
+from database.database import save_channel, delete_channel, get_channels, is_admin
 from config import *
+from config import OWNER_ID, ADMINS
 from database.database import *
 from helper_func import *
 from datetime import datetime, timedelta
 
 PAGE_SIZE = 6
 
-# Cache for chat information to avoid repeated API calls
 chat_info_cache = {}
 
-# Revoke invite link after 5-10 minutes
+
+# ────────────── Helper: admin check for callbacks ──────────────
+async def _is_callback_admin(callback_query) -> bool:
+    try:
+        uid = callback_query.from_user.id
+    except Exception:
+        return False
+    if uid == OWNER_ID or uid in ADMINS:
+        return True
+    try:
+        return await is_admin(uid)
+    except Exception:
+        return False
+
+
 async def revoke_invite_after_5_minutes(client: Client, channel_id: int, link: str, is_request: bool = False):
-    await asyncio.sleep(300)  # 5 minutes
+    await asyncio.sleep(300)
     try:
         await client.revoke_chat_invite_link(channel_id, link)
         print(f"{'Jᴏɪɴ ʀᴇǫᴜᴇsᴛ' if is_request else 'Iɴᴠɪᴛᴇ'} ʟɪɴᴋ ʀᴇᴠᴏᴋᴇᴅ ғᴏʀ ᴄʜᴀɴɴᴇʟ {channel_id}")
@@ -27,7 +41,7 @@ async def revoke_invite_after_5_minutes(client: Client, channel_id: int, link: s
     except Exception as e:
         print(f"Fᴀɪʟᴇᴅ ᴛᴏ ʀᴇᴠᴏᴋᴇ ɪɴᴠɪᴛᴇ ғᴏʀ ᴄʜᴀɴɴᴇʟ {channel_id}: {e}")
 
-# Add chat command
+
 @Client.on_message((filters.command('addchat') | filters.command('addch')) & is_owner_or_admin)
 async def set_channel(client: Client, message: Message):
     try:
@@ -38,16 +52,13 @@ async def set_channel(client: Client, message: Message):
     try:
         chat = await client.get_chat(channel_id)
 
-        # Check permissions based on chat type
         if chat.permissions:
-            # For groups/channels, check appropriate permissions
             has_permission = False
             if hasattr(chat.permissions, 'can_post_messages') and chat.permissions.can_post_messages:
                 has_permission = True
             elif hasattr(chat.permissions, 'can_edit_messages') and chat.permissions.can_edit_messages:
                 has_permission = True
             elif chat.type.name in ['GROUP', 'SUPERGROUP']:
-                # For groups, having the bot as admin is usually sufficient
                 try:
                     bot_member = await client.get_chat_member(chat.id, (await client.get_me()).id)
                     if bot_member.status.name in ['ADMINISTRATOR', 'CREATOR']:
@@ -81,7 +92,7 @@ async def set_channel(client: Client, message: Message):
     except Exception as e:
         return await message.reply(f"Unexpected Error: {str(e)}")
 
-# Delete chat command
+
 @Client.on_message((filters.command('delchat') | filters.command('delch')) & is_owner_or_admin)
 async def del_channel(client: Client, message: Message):
     try:
@@ -92,7 +103,7 @@ async def del_channel(client: Client, message: Message):
     await delete_channel(channel_id)
     return await message.reply(f"<b><blockquote expandable>❌ Cʜᴀᴛ {channel_id} ʜᴀs ʙᴇᴇɴ ʀᴇᴍᴏᴠᴇᴅ sᴜᴄᴄᴇssғᴜʟʟʏ.</b>")
 
-# Channel post command
+
 @Client.on_message(filters.command('ch_links') & is_owner_or_admin)
 async def channel_post(client: Client, message: Message):
     try:
@@ -104,13 +115,13 @@ async def channel_post(client: Client, message: Message):
     except Exception as e:
         await message.reply(f"<b>Error:</b> <code>{str(e)}</code>")
 
+
 async def send_channel_page(client, message, channels, page, edit=False):
     total_pages = (len(channels) + PAGE_SIZE - 1) // PAGE_SIZE
     start_idx = page * PAGE_SIZE
     end_idx = start_idx + PAGE_SIZE
     buttons = []
 
-    # Get all chat info concurrently
     chat_tasks = []
     for channel_id in channels[start_idx:end_idx]:
         chat_tasks.append(get_chat_info(client, channel_id))
@@ -154,27 +165,50 @@ async def send_channel_page(client, message, channels, page, edit=False):
 
     reply_markup = InlineKeyboardMarkup(buttons)
     if edit:
-        await message.edit_text("Sᴇʟᴇᴄᴛ ᴀ ᴄʜᴀɴɴᴇʟ ᴛᴏ ᴀᴄᴄᴇss:", reply_markup=reply_markup)
+        try:
+            await message.edit_text("Sᴇʟᴇᴄᴛ ᴀ ᴄʜᴀɴɴᴇʟ ᴛᴏ ᴀᴄᴄᴇss:", reply_markup=reply_markup)
+        except MessageNotModified:
+            pass
     else:
         await message.reply("Sᴇʟᴇᴄᴛ ᴄʜᴀɴɴᴇʟ:", reply_markup=reply_markup)
 
-@Client.on_callback_query(filters.regex(r"channelpage_(\d+)"))
-async def paginate_channels(client: Client, callback_query):
-    page = int(callback_query.data.split("_")[1])
-    channels = await get_channels()
-    await send_channel_page(client, callback_query.message, channels, page, edit=True)
 
-# Request post command
+@Client.on_callback_query(filters.regex(r"^channelpage_(\d+)$"), group=-1)
+async def paginate_channels(client: Client, callback_query):
+    # 🔒 Admin-only check
+    if not await _is_callback_admin(callback_query):
+        return await callback_query.answer("❌ Admin only!", show_alert=True)
+
+    try:
+        await callback_query.answer()
+    except Exception:
+        pass
+
+    try:
+        page = int(callback_query.data.split("_")[1])
+        channels = await get_channels()
+        await send_channel_page(client, callback_query.message, channels, page, edit=True)
+    except MessageNotModified:
+        pass
+    except Exception as e:
+        print(f"[paginate_channels] Error: {e}")
+        try:
+            await callback_query.answer(f"Error: {e}", show_alert=True)
+        except Exception:
+            pass
+
+
 @Client.on_message(filters.command('reqlink') & is_owner_or_admin)
 async def req_post(client: Client, message: Message):
     try:
         channels = await get_channels()
         if not channels:
-            return await message.reply("<b><blockquote expandable>Nᴏ ᴄʜᴀɴɴᴇʟs ᴀʀᴇ ᴀᴠᴀɪʟᴀʙʟᴇ. Pʟᴇᴀsᴇ ᴜsᴇ /setchannel ᴛᴏ ᴀᴅᴅ ᴀ ᴄʜᴀɴɴᴇʟ</b>")
+            return await message.reply("<b><blockquote expandable>Nᴏ ᴄʜᴀɴɴᴇʟs ᴀʀᴇ ᴀᴠᴀɪʟᴀʙʟᴇ. Pʟᴇᴀsᴇ ᴜsᴇ /addch ᴛᴏ ᴀᴅᴅ ᴀ ᴄʜᴀɴɴᴇʟ</b>")
 
         await send_request_page(client, message, channels, page=0)
     except Exception as e:
         await message.reply(f"<b>Error:</b> <code>{str(e)}</code>")
+
 
 async def send_request_page(client, message, channels, page, edit=False):
     total_pages = (len(channels) + PAGE_SIZE - 1) // PAGE_SIZE
@@ -182,7 +216,6 @@ async def send_request_page(client, message, channels, page, edit=False):
     end_idx = start_idx + PAGE_SIZE
     buttons = []
 
-    # Get all chat info concurrently
     chat_tasks = []
     for channel_id in channels[start_idx:end_idx]:
         chat_tasks.append(get_chat_info(client, channel_id))
@@ -226,17 +259,39 @@ async def send_request_page(client, message, channels, page, edit=False):
         buttons.append(nav_buttons)
     reply_markup = InlineKeyboardMarkup(buttons)
     if edit:
-        await message.edit_text("Sᴇʟᴇᴄᴛ ᴀ ᴄʜᴀɴɴᴇʟ ᴛᴏ ʀᴇǫᴜᴇsᴛ ᴀᴄᴄᴇss:", reply_markup=reply_markup)
+        try:
+            await message.edit_text("Sᴇʟᴇᴄᴛ ᴀ ᴄʜᴀɴɴᴇʟ ᴛᴏ ʀᴇǫᴜᴇsᴛ ᴀᴄᴄᴇss:", reply_markup=reply_markup)
+        except MessageNotModified:
+            pass
     else:
         await message.reply("Sᴇʟᴇᴄᴛ ᴄʜᴀɴɴᴇʟ:", reply_markup=reply_markup)
 
-@Client.on_callback_query(filters.regex(r"reqpage_(\d+)"))
-async def paginate_requests(client: Client, callback_query):
-    page = int(callback_query.data.split("_")[1])
-    channels = await get_channels()
-    await send_request_page(client, callback_query.message, channels, page, edit=True)
 
-# Links command - show all links as text
+@Client.on_callback_query(filters.regex(r"^reqpage_(\d+)$"), group=-1)
+async def paginate_requests(client: Client, callback_query):
+    # 🔒 Admin-only check
+    if not await _is_callback_admin(callback_query):
+        return await callback_query.answer("❌ Admin only!", show_alert=True)
+
+    try:
+        await callback_query.answer()
+    except Exception:
+        pass
+
+    try:
+        page = int(callback_query.data.split("_")[1])
+        channels = await get_channels()
+        await send_request_page(client, callback_query.message, channels, page, edit=True)
+    except MessageNotModified:
+        pass
+    except Exception as e:
+        print(f"[paginate_requests] Error: {e}")
+        try:
+            await callback_query.answer(f"Error: {e}", show_alert=True)
+        except Exception:
+            pass
+
+
 @Client.on_message(filters.command('links') & is_owner_or_admin)
 async def show_links(client: Client, message: Message):
     try:
@@ -248,6 +303,7 @@ async def show_links(client: Client, message: Message):
     except Exception as e:
         await message.reply(f"<b>Error:</b> <code>{str(e)}</code>")
 
+
 async def send_links_page(client, message, channels, page, edit=False):
     total_pages = (len(channels) + PAGE_SIZE - 1) // PAGE_SIZE
     start_idx = page * PAGE_SIZE
@@ -255,7 +311,6 @@ async def send_links_page(client, message, channels, page, edit=False):
 
     links_text = "<b>➤ Aʟʟ Cʜᴀɴɴᴇʟ Lɪɴᴋs:</b>\n\n"
 
-    # Get all chat info and links concurrently
     tasks = []
     for channel_id in channels[start_idx:end_idx]:
         tasks.append(asyncio.gather(
@@ -298,10 +353,8 @@ async def send_links_page(client, message, channels, page, edit=False):
             print(f"Error for channel {channel_id}: {e}")
             links_text += f"<b>{idx}. Channel {channel_id}</b> (Error)\n\n"
 
-    # Add pagination info
     links_text += f"<b>📄 Pᴀɢᴇ {page + 1} ᴏғ {total_pages}</b>"
 
-    # Create navigation buttons
     buttons = []
     nav_buttons = []
     if page > 0:
@@ -315,17 +368,39 @@ async def send_links_page(client, message, channels, page, edit=False):
     reply_markup = InlineKeyboardMarkup(buttons) if buttons else None
 
     if edit:
-        await message.edit_text(links_text, reply_markup=reply_markup)
+        try:
+            await message.edit_text(links_text, reply_markup=reply_markup)
+        except MessageNotModified:
+            pass
     else:
         await message.reply(links_text, reply_markup=reply_markup)
 
-@Client.on_callback_query(filters.regex(r"linkspage_(\d+)"))
-async def paginate_links(client: Client, callback_query):
-    page = int(callback_query.data.split("_")[1])
-    channels = await get_channels()
-    await send_links_page(client, callback_query.message, channels, page, edit=True)
 
-# Bulk link generation command
+@Client.on_callback_query(filters.regex(r"^linkspage_(\d+)$"), group=-1)
+async def paginate_links(client: Client, callback_query):
+    # 🔒 Admin-only check
+    if not await _is_callback_admin(callback_query):
+        return await callback_query.answer("❌ Admin only!", show_alert=True)
+
+    try:
+        await callback_query.answer()
+    except Exception:
+        pass
+
+    try:
+        page = int(callback_query.data.split("_")[1])
+        channels = await get_channels()
+        await send_links_page(client, callback_query.message, channels, page, edit=True)
+    except MessageNotModified:
+        pass
+    except Exception as e:
+        print(f"[paginate_links] Error: {e}")
+        try:
+            await callback_query.answer(f"Error: {e}", show_alert=True)
+        except Exception:
+            pass
+
+
 @Client.on_message(filters.command('bulklink') & is_owner_or_admin)
 async def bulk_link(client: Client, message: Message):
     user_id = message.from_user.id
@@ -351,6 +426,7 @@ async def bulk_link(client: Client, message: Message):
             reply_text += f"<b>{idx}. Channel {id_str}</b> (Error: {e})\n\n"
     await message.reply(reply_text)
 
+
 @Client.on_message(filters.command('genlink') & filters.private & is_owner_or_admin)
 async def generate_link_command(client: Client, message: Message):
     user_id = message.from_user.id
@@ -358,15 +434,12 @@ async def generate_link_command(client: Client, message: Message):
         return await message.reply("<b>Usage:</b> <code>/genlink &lt;link&gt;</code>")
 
     link = message.command[1]
-    # Store the link in the database channel
     try:
         sent_msg = await client.send_message(DATABASE_CHANNEL, f"#LINK\n{link}")
-        channel_id = sent_msg.id  # Use id as unique id for this link
-        # Save encoded links
+        channel_id = sent_msg.id
         base64_invite = await save_encoded_link(channel_id)
         base64_request = await encode(str(channel_id))
         await save_encoded_link2(channel_id, base64_request)
-        # Store the original link in the database
         from database.database import channels_collection
         await channels_collection.update_one(
             {"channel_id": channel_id},
@@ -384,6 +457,7 @@ async def generate_link_command(client: Client, message: Message):
     except Exception as e:
         await message.reply(f"<b>Error storing link:</b> <code>{e}</code>")
 
+
 @Client.on_message(filters.command('channels') & is_owner_or_admin)
 async def show_channel_ids(client: Client, message: Message):
     try:
@@ -395,13 +469,13 @@ async def show_channel_ids(client: Client, message: Message):
     except Exception as e:
         await message.reply(f"<b>Error:</b> <code>{str(e)}</code>")
 
-async def send_channel_ids_page(client, message, channels, page, edit=False):
-    PAGE_SIZE = 10
-    total_pages = (len(channels) + PAGE_SIZE - 1) // PAGE_SIZE
-    start_idx = page * PAGE_SIZE
-    end_idx = start_idx + PAGE_SIZE
 
-    # Get all chat info concurrently
+async def send_channel_ids_page(client, message, channels, page, edit=False):
+    PAGE_SIZE_LOCAL = 10
+    total_pages = (len(channels) + PAGE_SIZE_LOCAL - 1) // PAGE_SIZE_LOCAL
+    start_idx = page * PAGE_SIZE_LOCAL
+    end_idx = start_idx + PAGE_SIZE_LOCAL
+
     chat_tasks = []
     for channel_id in channels[start_idx:end_idx]:
         chat_tasks.append(get_chat_info(client, channel_id))
@@ -425,7 +499,6 @@ async def send_channel_ids_page(client, message, channels, page, edit=False):
 
     text += f"\n<b>📄 Pᴀɢᴇ {page + 1} ᴏғ {total_pages}</b>"
 
-    # Navigation buttons
     buttons = []
     nav_buttons = []
     if page > 0:
@@ -437,34 +510,51 @@ async def send_channel_ids_page(client, message, channels, page, edit=False):
 
     reply_markup = InlineKeyboardMarkup(buttons) if buttons else None
     if edit:
-        await message.edit_text(text, reply_markup=reply_markup)
+        try:
+            await message.edit_text(text, reply_markup=reply_markup)
+        except MessageNotModified:
+            pass
     else:
         await message.reply(text, reply_markup=reply_markup)
 
-@Client.on_callback_query(filters.regex(r"channelids_(\d+)"))
-async def paginate_channel_ids(client: Client, callback_query):
-    page = int(callback_query.data.split("_")[1])
-    channels = await get_channels()
-    await send_channel_ids_page(client, callback_query.message, channels, page, edit=True)
 
-# Helper function to get chat info with caching
+@Client.on_callback_query(filters.regex(r"^channelids_(\d+)$"), group=-1)
+async def paginate_channel_ids(client: Client, callback_query):
+    # 🔒 Admin-only check
+    if not await _is_callback_admin(callback_query):
+        return await callback_query.answer("❌ Admin only!", show_alert=True)
+
+    try:
+        await callback_query.answer()
+    except Exception:
+        pass
+
+    try:
+        page = int(callback_query.data.split("_")[1])
+        channels = await get_channels()
+        await send_channel_ids_page(client, callback_query.message, channels, page, edit=True)
+    except MessageNotModified:
+        pass
+    except Exception as e:
+        print(f"[paginate_channel_ids] Error: {e}")
+        try:
+            await callback_query.answer(f"Error: {e}", show_alert=True)
+        except Exception:
+            pass
+
+
 async def get_chat_info(client, channel_id):
-    # Check cache first
     if channel_id in chat_info_cache:
         cached_info, timestamp = chat_info_cache[channel_id]
-        # Cache for 5 minutes
         if (datetime.now() - timestamp).total_seconds() < 300:
             return cached_info
 
-    # Fetch fresh info
     try:
         chat_info = await client.get_chat(channel_id)
-        # Cache the result
         chat_info_cache[channel_id] = (chat_info, datetime.now())
         return chat_info
     except Exception as e:
         print(f"Error getting chat info for {channel_id}: {e}")
-        # Return cached info even if stale if we can't get fresh info
         if channel_id in chat_info_cache:
             return chat_info_cache[channel_id][0]
         raise e
