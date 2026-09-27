@@ -19,7 +19,7 @@ PORT = int(os.environ.get("PORT", "8080") or "8080")
 
 # Database
 DB_URI = os.environ.get("DB_URI", os.environ.get("DB_URL", os.environ.get("DATABASE_URL", "")))
-DB_NAME = os.environ.get("DB_NAME", "LinkShare")
+DB_NAME = os.environ.get("DB_NAME", "XOGSyncBot")
 
 #Auto approve 
 id_pattern = re.compile(r'^.\d+$')
@@ -62,7 +62,7 @@ USER_ROAST = "<b>⚠️ ғᴜᴄᴋ ʏᴏᴜ, ʏᴏᴜ ᴀʀᴇ ɴᴏᴛ ᴍʏ �
 
 # Logging
 LOG_FILE_NAME = "links-sharingbot.txt"
-DATABASE_CHANNEL = int(os.environ.get("DATABASE_CHANNEL", "-1003922775802") or "0") # Channel where user links are stored
+DATABASE_CHANNEL = int(os.environ.get("DATABASE_CHANNEL", "-1002327650917") or "0") # Channel where user links are stored
 #--- ---- ---- --- --- --- - -- -  - - - - - - - - - - - --  - -
 
 try:
