@@ -14,6 +14,21 @@ APPROVAL_WAIT_TIME = 90  # seconds
 AUTO_APPROVE_ENABLED = True  # Toggle for enabling/disabling auto approval 
 
 
+# ────────────── Helper: build a protected t.me/c/ message link ──────────────
+def build_message_link(chat_id: int, message_id: int = 1) -> str:
+    """
+    Convert a supergroup/channel ID (-100XXXXXXXXX) into a t.me/c/ link.
+    Only members of the channel can open this link.
+    Non-members will see "Join the channel to view this message".
+    """
+    cid = str(chat_id)
+    if cid.startswith("-100"):
+        cid = cid[4:]
+    elif cid.startswith("-"):
+        cid = cid[1:]
+    return f"https://t.me/c/{cid}/{message_id}"
+
+
 @Client.on_chat_join_request()
 async def autoapprove(client, message: ChatJoinRequest):
     global AUTO_APPROVE_ENABLED
@@ -35,7 +50,7 @@ async def autoapprove(client, message: ChatJoinRequest):
     if CHAT_ID and (chat.id not in CHAT_ID) and not is_fsub:
         return
 
-    # check agr approval of hai us chnl m
+    # check if approval is off for this channel
     if await is_approval_off(chat.id):
         print(f"Auto-approval is OFF for channel {chat.id}")
         return
@@ -62,10 +77,12 @@ async def autoapprove(client, message: ChatJoinRequest):
     
     if APPROVED == "on":
         try:
-            invite_link = await client.export_chat_invite_link(chat.id)
+            # ✅ Use protected t.me/c/ message link instead of invite link
+            message_link = build_message_link(chat.id, message_id=1)
+
             buttons = [
                 [InlineKeyboardButton('• ᴊᴏɪɴ ᴍʏ ᴜᴘᴅᴀᴛᴇs •', url='https://t.me/Unroder')],
-                [InlineKeyboardButton(f'• ᴊᴏɪɴ {chat.title} •', url=invite_link)]
+                [InlineKeyboardButton(f'• ᴊᴏɪɴ {chat.title} •', url=message_link)]
             ]
             markup = InlineKeyboardMarkup(buttons)
             caption = TEXT.format(mention=user.mention, title=chat.title)
@@ -78,6 +95,7 @@ async def autoapprove(client, message: ChatJoinRequest):
             )
         except Exception as e:
             print(f"Failed to send welcome message to {user.id}: {e}")
+
 
 @Client.on_message(filters.command("reqtime") & filters.private & is_owner_or_admin)
 async def set_reqtime(client: Client, message: Message):
