@@ -19,7 +19,7 @@ PORT = int(os.environ.get("PORT", "8080") or "8080")
 
 # Database
 DB_URI = os.environ.get("DB_URI", os.environ.get("DB_URL", os.environ.get("DATABASE_URL", "")))
-DB_NAME = os.environ.get("DB_NAME", "XOGSyncBot")
+DB_NAME = os.environ.get("DB_NAME", "LinkShare")
 
 #Auto approve 
 id_pattern = re.compile(r'^.\d+$')
