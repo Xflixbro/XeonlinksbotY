@@ -304,27 +304,6 @@ WAIT_MSG = "<b>Processing...</b>"
 
 REPLY_ERROR = """Use this as a reply to a user message in the bot's PM, not in the channel."""
 
-@Client.on_message(filters.command('status') & filters.private & is_owner_or_admin)
-async def info(client: Client, message: Message):
-    reply_markup = InlineKeyboardMarkup([[InlineKeyboardButton("• Close •", callback_data="close")]])
-    
-    start_time = time.time()
-    
-    total_users = await count_users()
-
-    end_time = time.time()
-    ping_time = (end_time - start_time) * 1000
-    
-    now = datetime.now()
-    delta = now - getattr(client, "uptime", now)
-    bottime = get_readable_time(delta.seconds)
-    
-    await message.reply_text(
-        f"<b>Users: {total_users}\n\nUptime: {bottime}\n\nPing: {ping_time:.2f} ms</b>",
-        reply_markup=reply_markup,
-        parse_mode=ParseMode.HTML
-    )
-
 #--------------------------------------------------------------[[ADMIN COMMANDS]]---------------------------------------------------------------------------#
 # Handler for the /cancel command
 @Client.on_message(filters.command('cancel') & filters.private & is_owner_or_admin)
