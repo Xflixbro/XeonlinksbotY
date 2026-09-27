@@ -1,6 +1,6 @@
-
 import motor.motor_asyncio
 import base64
+import secrets
 from config import DB_URI, DB_NAME
 from datetime import datetime, timedelta
 from typing import List, Optional
@@ -154,13 +154,15 @@ async def delete_channel(channel_id: int) -> bool:
         return False
 
 async def save_encoded_link(channel_id: int) -> Optional[str]:
-    """Save an encoded link for a channel and return it."""
+    """Save a freshly generated random encoded link for a channel and return it."""
     if not isinstance(channel_id, int):
         print(f"Invalid channel_id: {channel_id}")
         return None
     
     try:
-        encoded_link = base64.urlsafe_b64encode(str(channel_id).encode()).decode()
+        # Random token – differs on every call so re-adding a channel yields a new link
+        encoded_link = secrets.token_urlsafe(16)
+        
         await channels_collection.update_one(
             {"channel_id": channel_id},
             {
