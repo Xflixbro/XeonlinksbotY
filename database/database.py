@@ -13,6 +13,22 @@ channels_collection = database['channels']
 fsub_channels_collection = database['fsub_channels']
 
 
+# ═══════════════════════════════════════════════════════════════
+#  BASE64 HELPERS  (single source of truth, padding stripped)
+# ═══════════════════════════════════════════════════════════════
+def _b64_encode_channel_id(channel_id: int) -> str:
+    """URL-safe base64 of channel_id, padding '=' stripped (canonical form)."""
+    return base64.urlsafe_b64encode(str(channel_id).encode("ascii")).decode("ascii").rstrip("=")
+
+
+def _b64_pad(token: str) -> str:
+    """Add back '=' padding so base64 decode works."""
+    return token + "=" * (-len(token) % 4)
+
+
+# ═══════════════════════════════════════════════════════════════
+#  USERS
+# ═══════════════════════════════════════════════════════════════
 async def add_user(user_id: int) -> bool:
     """Add a user to the database if they don't exist."""
     if not isinstance(user_id, int) or user_id <= 0:
@@ -67,6 +83,9 @@ async def del_user(user_id: int) -> bool:
         return False
 
 
+# ═══════════════════════════════════════════════════════════════
+#  ADMINS
+# ═══════════════════════════════════════════════════════════════
 async def is_admin(user_id: int) -> bool:
     """Check if a user is an admin."""
     admins_collection = database['admins']
@@ -113,15 +132,15 @@ async def list_admins() -> list:
 
 
 # ═══════════════════════════════════════════════════════════════
-#  CHANNEL HELPERS (with debug logging)
+#  CHANNELS  —  /addch  /delch  /channels  + token encoding
 # ═══════════════════════════════════════════════════════════════
 
-async def save_channel(channel_id: int) -> bool:
-    """Save a channel to the database with invite link expiration."""
-    print(f"[DEBUG] save_channel called with: {channel_id!r} type={type(channel_id)}")
-
-    if not isinstance(channel_id, int):
-        print(f"[DEBUG] ❌ channel_id is not int → returning False")
+async def save_channel(channel_id) -> bool:
+    """Save/update a channel row. Always stores channel_id as int."""
+    try:
+        channel_id = int(channel_id)
+    except (TypeError, ValueError):
+        print(f"[save_channel] Invalid channel_id: {channel_id!r}")
         return False
 
     try:
@@ -130,144 +149,172 @@ async def save_channel(channel_id: int) -> bool:
             {
                 "$set": {
                     "channel_id": channel_id,
-                    "invite_link_expiry": None,
                     "created_at": datetime.utcnow(),
-                    "status": "active"
+                    "status": "active",
                 }
             },
             upsert=True
         )
-        print(f"[DEBUG] ✅ save_channel: matched={result.matched_count} upserted={result.upserted_id}")
+        print(f"[save_channel] channel_id={channel_id} matched={result.matched_count} upserted={result.upserted_id}")
         return True
     except Exception as e:
-        print(f"[DEBUG] ❌ EXCEPTION in save_channel: {type(e).__name__}: {e}")
+        print(f"[save_channel] Error: {e}")
         return False
 
 
 async def get_channels() -> List[int]:
-    """Get all active channel IDs from the database."""
+    """Return every stored channel_id as int (no status filter)."""
     try:
-        channels = await channels_collection.find({"status": "active"}).to_list(None)
-        valid_channels = []
-        for channel in channels:
-            if isinstance(channel, dict) and "channel_id" in channel:
-                valid_channels.append(channel["channel_id"])
+        channels = await channels_collection.find({}).to_list(None)
+        valid: List[int] = []
+        for ch in channels:
+            cid = ch.get("channel_id")
+            if isinstance(cid, int):
+                valid.append(cid)
             else:
-                print(f"[DEBUG] Invalid channel document: {channel}")
-        if not valid_channels:
-            print(f"[DEBUG] No valid channels found. Total documents checked: {len(channels)}")
-        else:
-            print(f"[DEBUG] get_channels returned: {valid_channels}")
-        return valid_channels
+                # try converting if stored as string
+                try:
+                    valid.append(int(cid))
+                except (TypeError, ValueError):
+                    print(f"[get_channels] Skipping bad row: {ch}")
+        print(f"[get_channels] Returning {valid}")
+        return valid
     except Exception as e:
-        print(f"[DEBUG] Error fetching channels: {e}")
+        print(f"[get_channels] Error: {e}")
         return []
 
 
-async def delete_channel(channel_id: int) -> bool:
-    """Delete a channel from the database."""
+async def delete_channel(channel_id) -> bool:
+    """Delete every doc with this exact channel_id. Returns True if something was deleted."""
     try:
-        result = await channels_collection.delete_one({"channel_id": channel_id})
-        print(f"[DEBUG] delete_channel: {channel_id} → deleted_count={result.deleted_count}")
+        channel_id = int(channel_id)
+    except (TypeError, ValueError):
+        print(f"[delete_channel] Invalid channel_id: {channel_id!r}")
+        return False
+
+    try:
+        result = await channels_collection.delete_many({"channel_id": channel_id})
+        print(f"[delete_channel] channel_id={channel_id} deleted_count={result.deleted_count}")
         return result.deleted_count > 0
     except Exception as e:
-        print(f"[DEBUG] Error deleting channel {channel_id}: {e}")
+        print(f"[delete_channel] Error: {e}")
         return False
 
 
-async def save_encoded_link(channel_id: int) -> Optional[str]:
-    """Save an encoded link for a channel and return it."""
-    print(f"[DEBUG] save_encoded_link called with: {channel_id!r} type={type(channel_id)}")
-
-    if not isinstance(channel_id, int):
-        print(f"[DEBUG] ❌ channel_id is not int → returning None")
+async def save_encoded_link(channel_id) -> Optional[str]:
+    """Persist the canonical (padding-stripped) base64 of channel_id. Returns the token."""
+    try:
+        channel_id = int(channel_id)
+    except (TypeError, ValueError):
+        print(f"[save_encoded_link] Invalid channel_id: {channel_id!r}")
         return None
 
     try:
-        encoded_link = base64.urlsafe_b64encode(str(channel_id).encode()).decode()
-        print(f"[DEBUG] Encoded string: {encoded_link}")
-
-        result = await channels_collection.update_one(
+        encoded_link = _b64_encode_channel_id(channel_id)
+        await channels_collection.update_one(
             {"channel_id": channel_id},
             {
                 "$set": {
+                    "channel_id": channel_id,
                     "encoded_link": encoded_link,
                     "status": "active",
-                    "updated_at": datetime.utcnow()
+                    "updated_at": datetime.utcnow(),
                 }
             },
             upsert=True
         )
-        print(f"[DEBUG] ✅ save_encoded_link: matched={result.matched_count} upserted={result.upserted_id}")
+        print(f"[save_encoded_link] channel_id={channel_id} -> {encoded_link}")
         return encoded_link
     except Exception as e:
-        print(f"[DEBUG] ❌ EXCEPTION in save_encoded_link: {type(e).__name__}: {e}")
+        print(f"[save_encoded_link] Error: {e}")
         return None
 
 
 async def get_channel_by_encoded_link(encoded_link: str) -> Optional[int]:
-    """Get a channel ID by its encoded link."""
-    if not isinstance(encoded_link, str):
+    """Look up channel_id from the normal token. Tolerates old padded rows."""
+    if not isinstance(encoded_link, str) or not encoded_link:
         return None
 
+    token = encoded_link.rstrip("=")
     try:
-        channel = await channels_collection.find_one({"encoded_link": encoded_link, "status": "active"})
-        result = channel["channel_id"] if channel and "channel_id" in channel else None
-        print(f"[DEBUG] get_channel_by_encoded_link({encoded_link}) → {result}")
-        return result
+        # new canonical form (no padding)
+        doc = await channels_collection.find_one({"encoded_link": token})
+        if doc:
+            cid = doc.get("channel_id")
+            return int(cid) if cid is not None else None
+
+        # legacy rows that still have padding
+        doc = await channels_collection.find_one({"encoded_link": _b64_pad(token)})
+        if doc:
+            cid = doc.get("channel_id")
+            return int(cid) if cid is not None else None
+
+        return None
     except Exception as e:
-        print(f"[DEBUG] Error fetching channel by encoded link {encoded_link}: {e}")
+        print(f"[get_channel_by_encoded_link] Error: {e}")
         return None
 
 
-async def save_encoded_link2(channel_id: int, encoded_link: str) -> Optional[str]:
-    """Save a secondary encoded link for a channel."""
-    print(f"[DEBUG] save_encoded_link2 called with: {channel_id!r} encoded={encoded_link!r}")
-
-    if not isinstance(channel_id, int) or not isinstance(encoded_link, str):
-        print(f"[DEBUG] ❌ Invalid input: channel_id={channel_id}, encoded_link={encoded_link}")
-        return None
-
+async def save_encoded_link2(channel_id, encoded_link: str) -> Optional[str]:
+    """Persist the canonical request token. Returns the stored token."""
     try:
-        result = await channels_collection.update_one(
+        channel_id = int(channel_id)
+    except (TypeError, ValueError):
+        print(f"[save_encoded_link2] Invalid channel_id: {channel_id!r}")
+        return None
+    if not isinstance(encoded_link, str) or not encoded_link:
+        return None
+
+    token = encoded_link.rstrip("=")
+    try:
+        await channels_collection.update_one(
             {"channel_id": channel_id},
             {
                 "$set": {
-                    "req_encoded_link": encoded_link,
+                    "channel_id": channel_id,
+                    "req_encoded_link": token,
                     "status": "active",
-                    "updated_at": datetime.utcnow()
+                    "updated_at": datetime.utcnow(),
                 }
             },
             upsert=True
         )
-        print(f"[DEBUG] ✅ save_encoded_link2: matched={result.matched_count} upserted={result.upserted_id}")
-        return encoded_link
+        print(f"[save_encoded_link2] channel_id={channel_id} -> {token}")
+        return token
     except Exception as e:
-        print(f"[DEBUG] ❌ EXCEPTION in save_encoded_link2: {type(e).__name__}: {e}")
+        print(f"[save_encoded_link2] Error: {e}")
         return None
 
 
 async def get_channel_by_encoded_link2(encoded_link: str) -> Optional[int]:
-    """Get a channel ID by its secondary encoded link."""
-    if not isinstance(encoded_link, str):
+    """Look up channel_id from the request token. Tolerates old padded rows."""
+    if not isinstance(encoded_link, str) or not encoded_link:
         return None
 
+    token = encoded_link.rstrip("=")
     try:
-        channel = await channels_collection.find_one({"req_encoded_link": encoded_link, "status": "active"})
-        result = channel["channel_id"] if channel and "channel_id" in channel else None
-        print(f"[DEBUG] get_channel_by_encoded_link2({encoded_link}) → {result}")
-        return result
+        doc = await channels_collection.find_one({"req_encoded_link": token})
+        if doc:
+            cid = doc.get("channel_id")
+            return int(cid) if cid is not None else None
+
+        doc = await channels_collection.find_one({"req_encoded_link": _b64_pad(token)})
+        if doc:
+            cid = doc.get("channel_id")
+            return int(cid) if cid is not None else None
+
+        return None
     except Exception as e:
-        print(f"[DEBUG] Error fetching channel by secondary encoded link {encoded_link}: {e}")
+        print(f"[get_channel_by_encoded_link2] Error: {e}")
         return None
 
 
+# ═══════════════════════════════════════════════════════════════
+#  INVITE-LINK CACHE  (still used by /start)
+# ═══════════════════════════════════════════════════════════════
 async def save_invite_link(channel_id: int, invite_link: str, is_request: bool) -> bool:
-    """Save the current invite link for a channel and its type."""
     if not isinstance(channel_id, int) or not isinstance(invite_link, str):
-        print(f"Invalid input: channel_id={channel_id}, invite_link={invite_link}")
         return False
-
     try:
         await channels_collection.update_one(
             {"channel_id": channel_id},
@@ -276,7 +323,7 @@ async def save_invite_link(channel_id: int, invite_link: str, is_request: bool) 
                     "current_invite_link": invite_link,
                     "is_request_link": is_request,
                     "invite_link_created_at": datetime.utcnow(),
-                    "status": "active"
+                    "status": "active",
                 }
             },
             upsert=True
@@ -288,12 +335,10 @@ async def save_invite_link(channel_id: int, invite_link: str, is_request: bool) 
 
 
 async def get_current_invite_link(channel_id: int) -> Optional[dict]:
-    """Get the current invite link and its type for a channel."""
     if not isinstance(channel_id, int):
         return None
-
     try:
-        channel = await channels_collection.find_one({"channel_id": channel_id, "status": "active"})
+        channel = await channels_collection.find_one({"channel_id": channel_id})
         if channel and "current_invite_link" in channel:
             return {
                 "invite_link": channel["current_invite_link"],
@@ -306,9 +351,8 @@ async def get_current_invite_link(channel_id: int) -> Optional[dict]:
 
 
 async def get_link_creation_time(channel_id: int):
-    """Get the creation time of the current invite link for a channel."""
     try:
-        channel = await channels_collection.find_one({"channel_id": channel_id, "status": "active"})
+        channel = await channels_collection.find_one({"channel_id": channel_id})
         if channel and "invite_link_created_at" in channel:
             return channel["invite_link_created_at"]
         return None
@@ -317,12 +361,13 @@ async def get_link_creation_time(channel_id: int):
         return None
 
 
+# ═══════════════════════════════════════════════════════════════
+#  FSUB
+# ═══════════════════════════════════════════════════════════════
 async def add_fsub_channel(channel_id: int, mode: str = "normal") -> bool:
-    """Add a channel to the FSub list with a specific mode."""
     if not isinstance(channel_id, int):
         print(f"Invalid channel_id: {channel_id}")
         return False
-
     try:
         await fsub_channels_collection.update_one(
             {'channel_id': channel_id},
@@ -343,7 +388,6 @@ async def add_fsub_channel(channel_id: int, mode: str = "normal") -> bool:
 
 
 async def remove_fsub_channel(channel_id: int) -> bool:
-    """Remove a channel from the FSub list."""
     try:
         result = await fsub_channels_collection.delete_one({'channel_id': channel_id})
         return result.deleted_count > 0
@@ -353,29 +397,31 @@ async def remove_fsub_channel(channel_id: int) -> bool:
 
 
 async def get_fsub_channels() -> List[dict]:
-    """Get all active FSub channel data."""
     try:
-        channels = await fsub_channels_collection.find({'status': 'active'}).to_list(None)
-        return channels
+        return await fsub_channels_collection.find({'status': 'active'}).to_list(None)
     except Exception as e:
         print(f"Error fetching FSub channels: {e}")
         return []
 
 
+# ═══════════════════════════════════════════════════════════════
+#  /genlink ORIGINAL LINK
+# ═══════════════════════════════════════════════════════════════
 async def get_original_link(channel_id: int) -> Optional[str]:
-    """Get the original link stored for a channel (used by /genlink)."""
     if not isinstance(channel_id, int):
         return None
     try:
-        channel = await channels_collection.find_one({"channel_id": channel_id, "status": "active"})
+        channel = await channels_collection.find_one({"channel_id": channel_id})
         return channel.get("original_link") if channel and "original_link" in channel else None
     except Exception as e:
         print(f"Error fetching original link for channel {channel_id}: {e}")
         return None
 
 
+# ═══════════════════════════════════════════════════════════════
+#  APPROVAL TOGGLE
+# ═══════════════════════════════════════════════════════════════
 async def set_approval_off(channel_id: int, off: bool = True) -> bool:
-    """Set approval_off flag for a channel."""
     if not isinstance(channel_id, int):
         print(f"Invalid channel_id: {channel_id}")
         return False
@@ -392,7 +438,6 @@ async def set_approval_off(channel_id: int, off: bool = True) -> bool:
 
 
 async def is_approval_off(channel_id: int) -> bool:
-    """Check if approval_off flag is set for a channel."""
     if not isinstance(channel_id, int):
         return False
     try:
@@ -403,8 +448,10 @@ async def is_approval_off(channel_id: int) -> bool:
         return False
 
 
+# ═══════════════════════════════════════════════════════════════
+#  FSUB SHORTCUTS
+# ═══════════════════════════════════════════════════════════════
 async def show_channels() -> List[int]:
-    """Get all channel IDs in FSub list."""
     try:
         channels = await fsub_channels_collection.find({'status': 'active'}).to_list(None)
         return [ch['channel_id'] for ch in channels if isinstance(ch, dict) and 'channel_id' in ch]
@@ -414,7 +461,6 @@ async def show_channels() -> List[int]:
 
 
 async def get_channel_mode(channel_id: int) -> str:
-    """Get the FSub mode for a channel."""
     if not isinstance(channel_id, int):
         return "off"
     try:
@@ -429,7 +475,6 @@ async def get_channel_mode(channel_id: int) -> str:
 
 
 async def set_channel_mode(channel_id: int, mode: str) -> bool:
-    """Set the FSub mode for a channel."""
     if not isinstance(channel_id, int):
         return False
     try:
