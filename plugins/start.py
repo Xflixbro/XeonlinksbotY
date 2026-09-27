@@ -1,6 +1,6 @@
-# Bluuuuuuuuuuhh....🥴 Visit our Channel ~ t.me/Unrated_Coder
+# Bluuuuuuuuuuhh....❤️ Visit our Channel ~ t.me/Unrated_Coder
 # Nothing... 
-# 😶
+# 🥴
 
 import asyncio
 import base64
@@ -11,6 +11,7 @@ from pyrogram import Client, filters
 from pyrogram.enums import ParseMode, ChatMemberStatus, ChatAction
 from pyrogram.types import Message, InlineKeyboardMarkup, InlineKeyboardButton, CallbackQuery, InputMediaPhoto
 from pyrogram.errors import FloodWait, UserNotParticipant, UserIsBlocked, InputUserDeactivated, MessageNotModified
+from pyrogram.errors import InviteHashExpired, RPCError
 import os
 import asyncio
 from asyncio import sleep
@@ -124,7 +125,7 @@ async def start_command(client: Client, message: Message):
                     [[InlineKeyboardButton("• Proceed to Link •", url=original_link)]]
                 )
                 return await message.reply_text(
-                    "<b><blockquote expandable>ʜᴇʀᴇ ɪs ʏᴏᴜʀ ʟɪɴᴋ! ᴄʟɪᴄᴋ ʙᴇʟᴏᴡ ᴛᴏ ᴘʀᴏᴄᴇᴇᴅ</b>",
+                    "<b><blockquote expandable>Your link is ready! Click below to continue.</b>",
                     reply_markup=button,
                     parse_mode=ParseMode.HTML
                 )
@@ -135,24 +136,29 @@ async def start_command(client: Client, message: Message):
                 old_link_info = await get_current_invite_link(channel_id)
                 current_time = datetime.now()
                 
-                # If we have an existing link and it's not expired yet (assuming 5 minutes validity)
+                # If we have an existing link, check if it's still valid AND the same type
                 if old_link_info:
                     link_created_time = await get_link_creation_time(channel_id)
-                    if link_created_time and (current_time - link_created_time).total_seconds() < 240:  # 4 minutes
-                        # Use existing link
+                    same_type = (old_link_info.get("is_request", False) == is_request)
+
+                    if (
+                        link_created_time
+                        and (current_time - link_created_time).total_seconds() < 240   # within 4 minutes
+                        and same_type                                                  # ✅ SAME TYPE ONLY
+                    ):
+                        # Reuse existing link only when type matches
                         invite_link = old_link_info["invite_link"]
                         is_request_link = old_link_info["is_request"]
                     else:
-                        # Revoke old link and create new one
+                        # Different type OR expired → revoke old & create a fresh one
                         try:
                             await client.revoke_chat_invite_link(channel_id, old_link_info["invite_link"])
-                            print(f"Revoked old {'request' if old_link_info['is_request'] else 'invite'} link for channel {channel_id}")
+                            print(f"Revoked old {'request' if old_link_info.get('is_request') else 'invite'} link for channel {channel_id}")
                         except (InviteHashExpired, RPCError):
                             pass
                         except Exception as e:
                             print(f"Failed to revoke old link for channel {channel_id}: {e}")
-                        
-                        # Create new link
+
                         invite = await client.create_chat_invite_link(
                             chat_id=channel_id,
                             expire_date=current_time + timedelta(minutes=10),
@@ -162,7 +168,7 @@ async def start_command(client: Client, message: Message):
                         is_request_link = is_request
                         await save_invite_link(channel_id, invite_link, is_request_link)
                 else:
-                    # Create new link
+                    # No cached link → create new
                     invite = await client.create_chat_invite_link(
                         chat_id=channel_id,
                         expire_date=current_time + timedelta(minutes=10),
@@ -172,11 +178,11 @@ async def start_command(client: Client, message: Message):
                     is_request_link = is_request
                     await save_invite_link(channel_id, invite_link, is_request_link)
 
-            button_text = "• ʀᴇǫᴜᴇsᴛ ᴛᴏ ᴊᴏɪɴ •" if is_request_link else "• ᴊᴏɪɴ ᴄʜᴀɴɴᴇʟ •"
+            button_text = "• Join Request •" if is_request_link else "• Join Channel •"
             button = InlineKeyboardMarkup([[InlineKeyboardButton(button_text, url=invite_link)]])
 
             await message.reply_text(
-                "<b><blockquote expandable>ʜᴇʀᴇ ɪs ʏᴏᴜʀ ʟɪɴᴋ! ᴄʟɪᴄᴋ ʙᴇʟᴏᴡ ᴛᴏ ᴘʀᴏᴄᴇᴇᴅ</b>",
+                "<b><blockquote expandable>Your link is ready! Click below to continue.</b>",
                 reply_markup=button,
                 parse_mode=ParseMode.HTML
             )
@@ -200,9 +206,9 @@ async def start_command(client: Client, message: Message):
     else:
         inline_buttons = InlineKeyboardMarkup(
             [
-                [InlineKeyboardButton("• ᴀʙᴏᴜᴛ", callback_data="about"),
-                 InlineKeyboardButton("ᴄʜᴀɴɴᴇʟs •", callback_data="channels")],
-                [InlineKeyboardButton("• Jᴏɪɴ ᴜᴘᴅᴀᴛᴇs •", url="https://t.me/Unrer")]
+                [InlineKeyboardButton("• About", callback_data="about"),
+                 InlineKeyboardButton("Channels •", callback_data="channels")],
+                [InlineKeyboardButton("• Join Updates •", url="https://t.me/Unrer")]
             ]
         )
         
@@ -296,7 +302,7 @@ async def check_sub_callback(client: Client, callback_query: CallbackQuery):
 
 WAIT_MSG = "<b>Processing...</b>"
 
-REPLY_ERROR = """Usᴇ ᴛʜɪs ᴄᴏᴍᴍᴀɴᴅ ᴀs ᴀ ʀᴇᴘʟʏ ᴛᴏ ᴀɴʏ Tᴇʟᴇɢʀᴀᴍ ᴍᴇssᴀɢᴇ ᴡɪᴛʜᴏᴜᴛ ᴀɴʏ sᴘᴀᴄᴇs."""
+REPLY_ERROR = """Use this as a reply to a user message in the bot's PM, not in the channel."""
 
 @Client.on_message(filters.command('status') & filters.private & is_owner_or_admin)
 async def info(client: Client, message: Message):
@@ -397,7 +403,7 @@ async def broadcast(client: Client, message: Message):
         chat_id = user['_id']
         async with cancel_lock:
             if is_canceled:
-                await pls_wait.edit(f"›› BROADCAST ({' + '.join(mode_text)}) CANCELED ❌")
+                await pls_wait.edit(f"❌ BROADCAST ({' + '.join(mode_text)}) CANCELED ❌")
                 return
 
         try:
@@ -434,31 +440,31 @@ async def broadcast(client: Client, message: Message):
         percent_complete = i / total
         if percent_complete - last_update_percentage >= update_interval or last_update_percentage == 0:
             num_blocks = int(percent_complete * bar_length)
-            progress_bar = "●" * num_blocks + "○" * (bar_length - num_blocks)
-            status_update = f"""<b>›› BROADCAST ({' + '.join(mode_text)}) IN PROGRESS...
+            progress_bar = "█" * num_blocks + "░" * (bar_length - num_blocks)
+            status_update = f"""<b>❖ BROADCAST ({' + '.join(mode_text)}) IN PROGRESS...
 
 <blockquote>⏳:</b> [{progress_bar}] <code>{percent_complete:.0%}</code></blockquote>
 
-<b>›› Total Users: <code>{total}</code>
-›› Successful: <code>{successful}</code>
-›› Blocked: <code>{blocked}</code>
-›› Deleted: <code>{deleted}</code>
-›› Unsuccessful: <code>{unsuccessful}</code></b>
+<b>❖ Total Users: <code>{total}</code>
+❖ Successful: <code>{successful}</code>
+❖ Blocked: <code>{blocked}</code>
+❖ Deleted: <code>{deleted}</code>
+❖ Unsuccessful: <code>{unsuccessful}</code></b>
 
-<i>➪ To stop broadcasting click: <b>/cancel</b></i>"""
+<i>➢ To stop broadcasting click: <b>/cancel</b></i>"""
             await pls_wait.edit(status_update)
             last_update_percentage = percent_complete
 
     # Final status
-    final_status = f"""<b>›› BROADCAST ({' + '.join(mode_text)}) COMPLETED ✅
+    final_status = f"""<b>❖ BROADCAST ({' + '.join(mode_text)}) COMPLETED ✅
 
-<blockquote>Dᴏɴᴇ:</b> [{progress_bar}] {percent_complete:.0%}</blockquote>
+<blockquote>Done:</b> [{progress_bar}] {percent_complete:.0%}</blockquote>
 
-<b>›› Total Users: <code>{total}</code>
-›› Successful: <code>{successful}</code>
-›› Blocked: <code>{blocked}</code>
-›› Deleted: <code>{deleted}</code>
-›› Unsuccessful: <code>{unsuccessful}</code></b>"""
+<b>❖ Total Users: <code>{total}</code>
+❖ Successful: <code>{successful}</code>
+❖ Blocked: <code>{blocked}</code>
+❖ Deleted: <code>{deleted}</code>
+❖ Unsuccessful: <code>{unsuccessful}</code></b>"""
     return await pls_wait.edit(final_status)
 
 
@@ -474,47 +480,10 @@ async def auto_delete(sent_msg, duration):
 #----------------------------------
 
 user_message_count = {}
-# user_banned_until = {} # Already defined above
 
 MAX_MESSAGES = 3
 TIME_WINDOW = timedelta(seconds=10)
 BAN_DURATION = timedelta(hours=1)
-
-"""
-
-@Client.on_message(filters.private)
-async def monitor_messages(client: Client, message: Message):
-    user_id = message.from_user.id
-    now = datetime.now()
-
-    if message.text and message.text.startswith("/"):
-        return
-
-    if user_id in ADMINS:
-        return 
-
-    if user_id in user_banned_until and now < user_banned_until[user_id]:
-        await message.reply_text(
-            "<b><blockquote expandable>You are temporarily banned from using commands due to spamming. Try again later.</b>",
-            parse_mode=ParseMode.HTML
-        )
-        return
-
-    if user_id not in user_message_count:
-        user_message_count[user_id] = []
-
-    user_message_count[user_id].append(now)
-    user_message_count[user_id] = [time for time in user_message_count[user_id] if now - time <= TIME_WINDOW]
-
-    if len(user_message_count[user_id]) > MAX_MESSAGES:
-        user_banned_until[user_id] = now + BAN_DURATION
-        await message.reply_text(
-            "<b><blockquote expandable>You are temporarily banned from using commands due to spamming. Try again later.</b>",
-            parse_mode=ParseMode.HTML
-        )
-        return
-
-"""
 
 @Client.on_callback_query()
 async def cb_handler(client: Client, query: CallbackQuery):
@@ -536,11 +505,11 @@ async def cb_handler(client: Client, query: CallbackQuery):
                     ABOUT_TXT
                 ),
                 reply_markup=InlineKeyboardMarkup([
-                    [InlineKeyboardButton('• ʙᴀᴄᴋ', callback_data='start'), InlineKeyboardButton('ᴄʟᴏsᴇ •', callback_data='close')]
+                    [InlineKeyboardButton('• Home', callback_data='start'), InlineKeyboardButton('Close •', callback_data='close')]
                 ]),
             )
         except MessageNotModified:
-            await query.answer("ʏᴏᴜ ᴀʀᴇ ᴀʟʀᴇᴀᴅʏ ɪɴ ᴀʙᴏᴜᴛ sᴇᴄᴛɪᴏɴ ❗", show_alert=False)
+            await query.answer("Nothing changed ❗", show_alert=False)
 
     elif data == "channels":
         try:
@@ -549,18 +518,18 @@ async def cb_handler(client: Client, query: CallbackQuery):
                                 CHANNELS_TXT
                 ),
                 reply_markup=InlineKeyboardMarkup([
-                    [InlineKeyboardButton('• ʙᴀᴄᴋ', callback_data='start'), InlineKeyboardButton('ᴄʟᴏsᴇ •', callback_data='close')]
+                    [InlineKeyboardButton('• Home', callback_data='start'), InlineKeyboardButton('Close •', callback_data='close')]
                 ]),
             )
         except MessageNotModified:
-            await query.answer("ʏᴏᴜ ᴀʀᴇ ᴀʟʀᴇᴀᴅʏ ɪɴ ᴄʜᴀɴɴᴇʟs sᴇᴄᴛɪᴏɴ ❗", show_alert=False)
+            await query.answer("Nothing changed ❗", show_alert=False)
 
     elif data in ["start", "home"]:
         inline_buttons = InlineKeyboardMarkup(
             [
-                [InlineKeyboardButton("• ᴀʙᴏᴜᴛ", callback_data="about"),
-                 InlineKeyboardButton("ᴄʜᴀɴɴᴇʟs •", callback_data="channels")],
-                [InlineKeyboardButton("• Jᴏɪɴ ᴜᴘᴅᴀᴛᴇs •", url="https://t.me/Unrder")]
+                [InlineKeyboardButton("• About", callback_data="about"),
+                 InlineKeyboardButton("Channels •", callback_data="channels")],
+                [InlineKeyboardButton("• Join Updates •", url="https://t.me/Unrder")]
             ]
         )
         try:
@@ -572,7 +541,7 @@ async def cb_handler(client: Client, query: CallbackQuery):
                 reply_markup=inline_buttons
             )
         except MessageNotModified:
-            await query.answer("ʜᴏᴍᴇ ᴘᴀɢᴇ ᴀʟʀᴇᴀᴅʏ ᴏᴘᴇɴ ❗", show_alert=False)
+            await query.answer("Nothing changed ❗", show_alert=False)
         except Exception as e:
             print(f"Error sending start/home photo: {e}")
             try:
@@ -590,11 +559,11 @@ async def cb_handler(client: Client, query: CallbackQuery):
         try:
             chat = await client.get_chat(cid)
             mode = await db.get_channel_mode(cid)
-            status = "🟢 ᴏɴ" if mode == "on" else "🔴 ᴏғғ"
+            status = "🟢 ON" if mode == "on" else "🔴 OFF"
             new_mode = "off" if mode == "on" else "on"
             buttons = [
-                [InlineKeyboardButton(f"ʀᴇǫ ᴍᴏᴅᴇ {'OFF' if mode == 'on' else 'ON'}", callback_data=f"rfs_toggle_{cid}_{new_mode}")],
-                [InlineKeyboardButton("‹ ʙᴀᴄᴋ", callback_data="fsub_back")]
+                [InlineKeyboardButton(f"Toggle Force {'OFF' if mode == 'on' else 'ON'}", callback_data=f"rfs_toggle_{cid}_{new_mode}")],
+                [InlineKeyboardButton("‹ Back", callback_data="fsub_back")]
             ]
             await query.message.edit_text(
                 f"Channel: {chat.title}\nCurrent Force-Sub Mode: {status}",
@@ -616,8 +585,8 @@ async def cb_handler(client: Client, query: CallbackQuery):
         status = "🟢 ON" if mode == "on" else "🔴 OFF"
         new_mode = "off" if mode == "on" else "on"
         buttons = [
-            [InlineKeyboardButton(f"ʀᴇǫ ᴍᴏᴅᴇ {'OFF' if mode == 'on' else 'ON'}", callback_data=f"rfs_toggle_{cid}_{new_mode}")],
-            [InlineKeyboardButton("‹ ʙᴀᴄᴋ", callback_data="fsub_back")]
+            [InlineKeyboardButton(f"Toggle Force {'OFF' if mode == 'on' else 'ON'}", callback_data=f"rfs_toggle_{cid}_{new_mode}")],
+            [InlineKeyboardButton("‹ Back", callback_data="fsub_back")]
         ]
         await query.message.edit_text(
             f"Channel: {chat.title}\nCurrent Force-Sub Mode: {status}",
@@ -637,7 +606,7 @@ async def cb_handler(client: Client, query: CallbackQuery):
                 continue
 
         await query.message.edit_text(
-            "sᴇʟᴇᴄᴛ ᴀ ᴄʜᴀɴɴᴇʟ ᴛᴏ ᴛᴏɢɢʟᴇ ɪᴛs ғᴏʀᴄᴇ-sᴜʙ ᴍᴏᴅᴇ:",
+            "Select a channel to toggle Force-Sub:",
             reply_markup=InlineKeyboardMarkup(buttons)
         )
 
