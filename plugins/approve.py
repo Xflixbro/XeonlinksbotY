@@ -10,7 +10,7 @@ from database.database import set_approval_off, is_approval_off, get_fsub_channe
 from helper_func import *
 
 # Default settings
-APPROVAL_WAIT_TIME = 200  # seconds
+APPROVAL_WAIT_TIME = 90  # seconds
 AUTO_APPROVE_ENABLED = True  # Toggle for enabling/disabling auto approval 
 
 
