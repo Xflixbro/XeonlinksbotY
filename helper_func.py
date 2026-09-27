@@ -2,7 +2,6 @@
 import base64
 import re
 import asyncio
-import secrets
 from pyrogram import filters
 from pyrogram.enums import ChatMemberStatus
 from config import ADMINS
@@ -43,10 +42,6 @@ async def decode(base64_string):
     string_bytes = base64.urlsafe_b64decode(base64_bytes)
     string = string_bytes.decode("ascii")
     return string
-
-async def generate_token(length: int = 16) -> str:
-    """Return a fresh URL-safe random token (unique per link)."""
-    return secrets.token_urlsafe(length)
 
 def get_readable_time(seconds: int) -> str:
     count = 0
