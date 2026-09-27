@@ -72,11 +72,9 @@ async def set_channel(client: Client, message: Message):
         await save_channel(channel_id)
         base64_invite = await save_encoded_link(channel_id)
         normal_link = f"https://t.me/{client.username}?start={base64_invite}"
-
-        base64_request = await generate_token()
+        base64_request = await encode(str(channel_id))
         await save_encoded_link2(channel_id, base64_request)
         request_link = f"https://t.me/{client.username}?start=req_{base64_request}"
-
         reply_text = (
             f"<b><blockquote expandable>✅ Cʜᴀᴛ {chat.title} ({channel_id}) ʜᴀs ʙᴇᴇɴ ᴀᴅᴅᴇᴅ sᴜᴄᴄᴇssғᴜʟʟʏ.</b>\n\n"
             f"<b>🔗 Nᴏʀᴍᴀʟ Lɪɴᴋ:</b> <code>{normal_link}</code>\n"
@@ -236,7 +234,7 @@ async def send_request_page(client, message, channels, page, edit=False):
             continue
 
         try:
-            base64_request = await generate_token()
+            base64_request = await encode(str(channel_id))
             await save_encoded_link2(channel_id, base64_request)
             button_link = f"https://t.me/{client.username}?start=req_{base64_request}"
 
@@ -318,7 +316,7 @@ async def send_links_page(client, message, channels, page, edit=False):
         tasks.append(asyncio.gather(
             get_chat_info(client, channel_id),
             save_encoded_link(channel_id),
-            generate_token(),
+            asyncio.create_task(encode(str(channel_id))),
             return_exceptions=True
         ))
 
@@ -418,11 +416,9 @@ async def bulk_link(client: Client, message: Message):
             chat = await client.get_chat(channel_id)
             base64_invite = await save_encoded_link(channel_id)
             normal_link = f"https://t.me/{client.username}?start={base64_invite}"
-
-            base64_request = await generate_token()
+            base64_request = await encode(str(channel_id))
             await save_encoded_link2(channel_id, base64_request)
             request_link = f"https://t.me/{client.username}?start=req_{base64_request}"
-
             reply_text += f"<b>{idx}. {chat.title} ({channel_id})</b>\n"
             reply_text += f"<b>➥ Nᴏʀᴍᴀʟ:</b> <code>{normal_link}</code>\n"
             reply_text += f"<b>➤ Rᴇǫᴜᴇsᴛ:</b> <code>{request_link}</code>\n\n"
@@ -442,10 +438,8 @@ async def generate_link_command(client: Client, message: Message):
         sent_msg = await client.send_message(DATABASE_CHANNEL, f"#LINK\n{link}")
         channel_id = sent_msg.id
         base64_invite = await save_encoded_link(channel_id)
-
-        base64_request = await generate_token()
+        base64_request = await encode(str(channel_id))
         await save_encoded_link2(channel_id, base64_request)
-
         from database.database import channels_collection
         await channels_collection.update_one(
             {"channel_id": channel_id},
