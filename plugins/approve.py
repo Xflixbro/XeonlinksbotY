@@ -31,7 +31,6 @@ def build_message_link(chat_id: int, message_id: int = 1) -> str:
     return f"https://t.me/c/{cid}/{message_id}"
 
 
-# ────────────── Welcome photo (auto-approve path) ──────────────
 async def send_welcome_message(client, user, chat):
     if APPROVED != "on":
         return
@@ -53,37 +52,16 @@ async def send_welcome_message(client, user, chat):
         print(f"[welcome] Failed to send to {user.id}: {e}")
 
 
-# ────────────── BAM approval notification (photo + buttons) ──────────────
-async def send_bam_approved_notification(client, user, chat):
-    """
-    Send 'request approved' notification as a PHOTO with buttons —
-    same style as the auto-approve welcome message.
-    """
-    try:
-        message_link = build_message_link(chat.id, message_id=1)
-
-        buttons = [
-            [InlineKeyboardButton('• ᴊᴏɪɴ ᴍʏ ᴜᴘᴅᴀᴛᴇs •', url='https://t.me/Unroder')],
-            [InlineKeyboardButton(f'• ᴊᴏɪɴ {chat.title} •', url=message_link)]
-        ]
-        markup = InlineKeyboardMarkup(buttons)
-
-        caption = (
-            f"ʏᴏᴜʀ ʀᴇǫᴜᴇsᴛ ᴛᴏ ᴊᴏɪɴ <b>{chat.title}</b> ɪs ᴀᴘᴘʀᴏᴠᴇᴅ.\n"
-            f"‣ ᴘᴏᴡᴇʀᴇᴅ ʙʏ @Unrated_Coder"
-        )
-
-        await client.send_photo(
-            chat_id=user.id,
-            photo=START_PIC,
-            caption=caption,
-            reply_markup=markup
-        )
-    except Exception as e:
-        print(f"[BAM-notify] Failed to notify {user.id}: {e}")
+def _bam_targets():
+    targets = []
+    if OWNER_ID:
+        targets.append(OWNER_ID)
+    for a in ADMINS:
+        if a not in targets:
+            targets.append(a)
+    return targets
 
 
-# ────────────── New join-request handler ──────────────
 @Client.on_chat_join_request()
 async def on_chat_join_request(client: Client, request: ChatJoinRequest):
     global AUTO_APPROVE_ENABLED
@@ -91,7 +69,6 @@ async def on_chat_join_request(client: Client, request: ChatJoinRequest):
     chat = request.chat
     user = request.from_user
 
-    # Detect if this came from a BAM link
     invite_link_str = None
     try:
         if request.invite_link:
@@ -106,12 +83,10 @@ async def on_chat_join_request(client: Client, request: ChatJoinRequest):
         if info and info.get("is_bam"):
             is_bam = True
 
-    # ── BAM path: notify admins, DO NOT auto-approve ──
     if is_bam:
         await _notify_admins_bam(client, chat, user, request)
         return
 
-    # ── Non-BAM path: original auto-approve behavior ──
     if not AUTO_APPROVE_ENABLED:
         return
 
@@ -149,17 +124,6 @@ async def on_chat_join_request(client: Client, request: ChatJoinRequest):
         return
 
     await send_welcome_message(client, user, chat)
-
-
-# ────────────── BAM: admin notification ──────────────
-def _bam_targets():
-    targets = []
-    if OWNER_ID:
-        targets.append(OWNER_ID)
-    for a in ADMINS:
-        if a not in targets:
-            targets.append(a)
-    return targets
 
 
 async def _notify_admins_bam(client: Client, chat, user, request: ChatJoinRequest):
@@ -202,7 +166,6 @@ async def _notify_admins_bam(client: Client, chat, user, request: ChatJoinReques
             print(f"[BAM] Failed to notify admin {admin_id}: {e}")
 
 
-# ────────────── BAM: approve / decline buttons ──────────────
 @Client.on_callback_query(filters.regex(r"^bam_(ap|dc)_(-?\d+)_(-?\d+)$"))
 async def bam_callback(client: Client, query: CallbackQuery):
     uid = query.from_user.id
@@ -211,7 +174,7 @@ async def bam_callback(client: Client, query: CallbackQuery):
         return await query.answer("❌ Admins only!", show_alert=True)
 
     parts = query.data.split("_")
-    action   = parts[1]                # "ap" or "dc"
+    action   = parts[1]
     chat_id  = int(parts[2])
     user_id  = int(parts[3])
 
@@ -220,23 +183,18 @@ async def bam_callback(client: Client, query: CallbackQuery):
     except Exception:
         chat = None
 
-    # ══════════ APPROVE ══════════
     if action == "ap":
         try:
             await client.approve_chat_join_request(chat_id=chat_id, user_id=user_id)
+            try:
+                member = await client.get_chat_member(chat_id, user_id)
+                target_user = member.user
+            except Exception:
+                target_user = None
 
-            # 🔔 Send "request approved" notification (photo + buttons)
-            if chat:
-                try:
-                    member = await client.get_chat_member(chat_id, user_id)
-                    approved_user = member.user
-                except Exception:
-                    approved_user = None
+            if target_user and chat:
+                await send_welcome_message(client, target_user, chat)
 
-                if approved_user:
-                    await send_bam_approved_notification(client, approved_user, chat)
-
-            # Update admin message — remove buttons, mark approved
             new_text = (
                 query.message.text.html
                 + f"\n\n✅ <b>APPROVED</b> by <a href='tg://user?id={uid}'>admin</a>"
@@ -247,11 +205,9 @@ async def bam_callback(client: Client, query: CallbackQuery):
         except Exception as e:
             await query.answer(f"❌ Failed: {e}", show_alert=True)
 
-    # ══════════ DECLINE ══════════
     else:
         try:
             await client.decline_chat_join_request(chat_id=chat_id, user_id=user_id)
-
             new_text = (
                 query.message.text.html
                 + f"\n\n❌ <b>DECLINED</b> by <a href='tg://user?id={uid}'>admin</a>"
@@ -262,7 +218,6 @@ async def bam_callback(client: Client, query: CallbackQuery):
             await query.answer(f"❌ Failed: {e}", show_alert=True)
 
 
-# ────────────── /reqtime /reqmode /approveoff /approveon ──────────────
 @Client.on_message(filters.command("reqtime") & filters.private & is_owner_or_admin)
 async def set_reqtime(client: Client, message: Message):
     global APPROVAL_WAIT_TIME
