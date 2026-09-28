@@ -1,26 +1,28 @@
-# Upgraded by @Unrated_Coder from Telegram
+# Upgraded by @Unrated_Coder from Telegram — with Supreme BAM Request Mode
 import os
 import asyncio
+from datetime import datetime
+
 from config import *
 from pyrogram import Client, filters
-from pyrogram.types import Message, User, ChatJoinRequest, InlineKeyboardMarkup, InlineKeyboardButton
+from pyrogram.types import (
+    Message, User, ChatJoinRequest,
+    InlineKeyboardMarkup, InlineKeyboardButton, CallbackQuery
+)
 from pyrogram.enums import ChatMemberStatus
 from pyrogram.errors import FloodWait, ChatAdminRequired, RPCError, UserNotParticipant
-from database.database import set_approval_off, is_approval_off, get_fsub_channels
+from database.database import (
+    set_approval_off, is_approval_off, get_fsub_channels,
+    lookup_invite_link, is_admin
+)
 from helper_func import *
 
-# Default settings
-APPROVAL_WAIT_TIME = 90  # seconds
-AUTO_APPROVE_ENABLED = True  # Toggle for enabling/disabling auto approval 
+# ────────────── Default settings ──────────────
+APPROVAL_WAIT_TIME = 90
+AUTO_APPROVE_ENABLED = True
 
 
-# ────────────── Helper: build a protected t.me/c/ message link ──────────────
 def build_message_link(chat_id: int, message_id: int = 1) -> str:
-    """
-    Convert a supergroup/channel ID (-100XXXXXXXXX) into a t.me/c/ link.
-    Only members of the channel can open this link.
-    Non-members will see "Join the channel to view this message".
-    """
     cid = str(chat_id)
     if cid.startswith("-100"):
         cid = cid[4:]
@@ -29,17 +31,65 @@ def build_message_link(chat_id: int, message_id: int = 1) -> str:
     return f"https://t.me/c/{cid}/{message_id}"
 
 
+async def send_welcome_message(client, user, chat):
+    if APPROVED != "on":
+        return
+    try:
+        message_link = build_message_link(chat.id, message_id=1)
+        buttons = [
+            [InlineKeyboardButton('• ᴊᴏɪɴ ᴍʏ ᴜᴘᴅᴀᴛᴇs •', url='https://t.me/Unroder')],
+            [InlineKeyboardButton(f'• ᴊᴏɪɴ {chat.title} •', url=message_link)]
+        ]
+        markup = InlineKeyboardMarkup(buttons)
+        caption = TEXT.format(mention=user.mention, title=chat.title)
+        await client.send_photo(
+            chat_id=user.id,
+            photo=START_PIC,
+            caption=caption,
+            reply_markup=markup
+        )
+    except Exception as e:
+        print(f"[welcome] Failed to send to {user.id}: {e}")
+
+
+def _bam_targets():
+    targets = []
+    if OWNER_ID:
+        targets.append(OWNER_ID)
+    for a in ADMINS:
+        if a not in targets:
+            targets.append(a)
+    return targets
+
+
 @Client.on_chat_join_request()
-async def autoapprove(client, message: ChatJoinRequest):
+async def on_chat_join_request(client: Client, request: ChatJoinRequest):
     global AUTO_APPROVE_ENABLED
+
+    chat = request.chat
+    user = request.from_user
+
+    invite_link_str = None
+    try:
+        if request.invite_link:
+            invite_link_str = getattr(request.invite_link, "invite_link", None) \
+                              or str(request.invite_link)
+    except Exception:
+        invite_link_str = None
+
+    is_bam = False
+    if invite_link_str:
+        info = await lookup_invite_link(invite_link_str)
+        if info and info.get("is_bam"):
+            is_bam = True
+
+    if is_bam:
+        await _notify_admins_bam(client, chat, user, request)
+        return
 
     if not AUTO_APPROVE_ENABLED:
         return
 
-    chat = message.chat
-    user = message.from_user
-
-    # Check if the chat is in CHAT_ID or if it is an FSub channel
     is_fsub = False
     fsub_channels = await get_fsub_channels()
     if fsub_channels:
@@ -50,74 +100,143 @@ async def autoapprove(client, message: ChatJoinRequest):
     if CHAT_ID and (chat.id not in CHAT_ID) and not is_fsub:
         return
 
-    # check if approval is off for this channel
     if await is_approval_off(chat.id):
         print(f"Auto-approval is OFF for channel {chat.id}")
         return
 
     print(f"{user.first_name} requested to join {chat.title}")
-    
     await asyncio.sleep(APPROVAL_WAIT_TIME)
 
-    # Check if user is already a participant before approving
     try:
         member = await client.get_chat_member(chat.id, user.id)
-        if member.status in [ChatMemberStatus.MEMBER, ChatMemberStatus.ADMINISTRATOR, ChatMemberStatus.OWNER]:
-            print(f"User {user.id} is already a participant of {chat.id}, skipping approval.")
+        if member.status in [ChatMemberStatus.MEMBER,
+                             ChatMemberStatus.ADMINISTRATOR,
+                             ChatMemberStatus.OWNER]:
+            print(f"User {user.id} already in {chat.id}, skipping.")
             return
     except Exception as e:
-        # Catch all exceptions so missing permissions or other errors don't halt approval
-        print(f"Error checking chat member status for user {user.id} in chat {chat.id}: {e}. Proceeding with approval.")
+        print(f"Member check failed for {user.id} in {chat.id}: {e}")
 
     try:
         await client.approve_chat_join_request(chat_id=chat.id, user_id=user.id)
     except Exception as e:
         print(f"Failed to approve {user.id} in {chat.id}: {e}")
         return
-    
-    if APPROVED == "on":
+
+    await send_welcome_message(client, user, chat)
+
+
+async def _notify_admins_bam(client: Client, chat, user, request: ChatJoinRequest):
+    name = f"{user.first_name or ''} {user.last_name or ''}".strip() or "Unknown"
+    username = f"@{user.username}" if user.username else "N/A"
+
+    try:
+        requested_time = request.date.strftime("%d %b %Y, %I:%M %p")
+    except Exception:
+        requested_time = datetime.utcnow().strftime("%d %b %Y, %I:%M %p")
+
+    text = (
+        "🔔 <b>NEW JOIN REQUEST</b>\n\n"
+        f"👤 <b>User:</b> {name} ({username})\n"
+        f"🆔 <b>User ID:</b> <code>{user.id}</code>\n"
+        f"📅 <b>Requested:</b> {requested_time}\n"
+        f"📢 <b>Channel:</b> {chat.title}\n"
+        f"🆔 <b>Channel ID:</b> <code>{chat.id}</code>\n\n"
+        "<b>Action Required:</b>\n"
+        "<i>Approve or decline this join request.</i>"
+    )
+
+    buttons = InlineKeyboardMarkup([
+        [
+            InlineKeyboardButton("✅ ᴀᴘᴘʀᴏᴠᴇ", callback_data=f"bam_ap_{chat.id}_{user.id}"),
+            InlineKeyboardButton("❌ ᴅᴇᴄʟɪɴᴇ", callback_data=f"bam_dc_{chat.id}_{user.id}")
+        ]
+    ])
+
+    for admin_id in _bam_targets():
         try:
-            # ✅ Use protected t.me/c/ message link instead of invite link
-            message_link = build_message_link(chat.id, message_id=1)
-
-            buttons = [
-                [InlineKeyboardButton('• ᴊᴏɪɴ ᴍʏ ᴜᴘᴅᴀᴛᴇs •', url='https://t.me/Unroder')],
-                [InlineKeyboardButton(f'• ᴊᴏɪɴ {chat.title} •', url=message_link)]
-            ]
-            markup = InlineKeyboardMarkup(buttons)
-            caption = TEXT.format(mention=user.mention, title=chat.title)
-
-            await client.send_photo(
-                chat_id=user.id,
-                photo=START_PIC,
-                caption=caption,
-                reply_markup=markup
-            )
+            await client.send_message(admin_id, text, reply_markup=buttons)
+        except FloodWait as e:
+            await asyncio.sleep(e.value)
+            try:
+                await client.send_message(admin_id, text, reply_markup=buttons)
+            except Exception:
+                pass
         except Exception as e:
-            print(f"Failed to send welcome message to {user.id}: {e}")
+            print(f"[BAM] Failed to notify admin {admin_id}: {e}")
+
+
+@Client.on_callback_query(filters.regex(r"^bam_(ap|dc)_(-?\d+)_(-?\d+)$"))
+async def bam_callback(client: Client, query: CallbackQuery):
+    uid = query.from_user.id
+    authorized = (uid == OWNER_ID) or (uid in ADMINS) or (await is_admin(uid))
+    if not authorized:
+        return await query.answer("❌ Admins only!", show_alert=True)
+
+    parts = query.data.split("_")
+    action   = parts[1]
+    chat_id  = int(parts[2])
+    user_id  = int(parts[3])
+
+    try:
+        chat = await client.get_chat(chat_id)
+    except Exception:
+        chat = None
+
+    if action == "ap":
+        try:
+            await client.approve_chat_join_request(chat_id=chat_id, user_id=user_id)
+            try:
+                member = await client.get_chat_member(chat_id, user_id)
+                target_user = member.user
+            except Exception:
+                target_user = None
+
+            if target_user and chat:
+                await send_welcome_message(client, target_user, chat)
+
+            new_text = (
+                query.message.text.html
+                + f"\n\n✅ <b>APPROVED</b> by <a href='tg://user?id={uid}'>admin</a>"
+            )
+            await query.message.edit_text(new_text, reply_markup=None)
+            await query.answer("✅ Approved!", show_alert=False)
+
+        except Exception as e:
+            await query.answer(f"❌ Failed: {e}", show_alert=True)
+
+    else:
+        try:
+            await client.decline_chat_join_request(chat_id=chat_id, user_id=user_id)
+            new_text = (
+                query.message.text.html
+                + f"\n\n❌ <b>DECLINED</b> by <a href='tg://user?id={uid}'>admin</a>"
+            )
+            await query.message.edit_text(new_text, reply_markup=None)
+            await query.answer("❌ Declined.", show_alert=False)
+        except Exception as e:
+            await query.answer(f"❌ Failed: {e}", show_alert=True)
 
 
 @Client.on_message(filters.command("reqtime") & filters.private & is_owner_or_admin)
 async def set_reqtime(client: Client, message: Message):
     global APPROVAL_WAIT_TIME
-    
     if len(message.command) != 2 or not message.command[1].isdigit():
         return await message.reply_text("Usage: <code>/reqtime {seconds}</code>")
-    
     APPROVAL_WAIT_TIME = int(message.command[1])
     await message.reply_text(f"✅ Request approval time set to <b>{APPROVAL_WAIT_TIME}</b> seconds.")
+
 
 @Client.on_message(filters.command("reqmode") & filters.private & is_owner_or_admin)
 async def toggle_reqmode(client: Client, message: Message):
     global AUTO_APPROVE_ENABLED
-    
     if len(message.command) != 2 or message.command[1].lower() not in ["on", "off"]:
         return await message.reply_text("Usage: <code>/reqmode on</code> or <code>/reqmode off</code>")
-    
     mode = message.command[1].lower()
     AUTO_APPROVE_ENABLED = (mode == "on")
     status = "enabled ✅" if AUTO_APPROVE_ENABLED else "disabled ❌"
     await message.reply_text(f"Auto-approval has been {status}.")
+
 
 @Client.on_message(filters.command("approveoff") & filters.private & is_owner_or_admin)
 async def approve_off_command(client: Client, message: Message):
@@ -128,7 +247,8 @@ async def approve_off_command(client: Client, message: Message):
     if success:
         await message.reply_text(f"✅ Auto-approval is now <b>OFF</b> for channel <code>{channel_id}</code>.")
     else:
-        await message.reply_text(f"❌ Failed to set auto-approval OFF for channel <code>{channel_id}</code>.")
+        await message.reply_text(f"❌ Failed for channel <code>{channel_id}</code>.")
+
 
 @Client.on_message(filters.command("approveon") & filters.private & is_owner_or_admin)
 async def approve_on_command(client: Client, message: Message):
@@ -139,4 +259,4 @@ async def approve_on_command(client: Client, message: Message):
     if success:
         await message.reply_text(f"✅ Auto-approval is now <b>ON</b> for channel <code>{channel_id}</code>.")
     else:
-        await message.reply_text(f"❌ Failed to set auto-approval ON for channel <code>{channel_id}</code>.")
+        await message.reply_text(f"❌ Failed for channel <code>{channel_id}</code>.")
