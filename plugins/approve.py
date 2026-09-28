@@ -31,6 +31,7 @@ def build_message_link(chat_id: int, message_id: int = 1) -> str:
     return f"https://t.me/c/{cid}/{message_id}"
 
 
+# ────────────── Normal auto-approval welcome ──────────────
 async def send_welcome_message(client, user, chat):
     if APPROVED != "on":
         return
@@ -50,6 +51,47 @@ async def send_welcome_message(client, user, chat):
         )
     except Exception as e:
         print(f"[welcome] Failed to send to {user.id}: {e}")
+
+
+# ══════════════════════════════════════════════════════════════
+# ★★★ ADDED: DEDICATED BAM APPROVAL NOTIFICATION ★★★
+# This is sent ONLY when an admin manually approves a BAM
+# join-request via the APPROVE button. It is completely separate
+# from the normal auto-approval welcome message above, so the
+# existing auto-approval flow is not affected in any way.
+# ══════════════════════════════════════════════════════════════
+async def send_bam_approval_message(client, user, chat):
+    """BAM-only approval notification — sent after admin approves."""
+    try:
+        message_link = build_message_link(chat.id, message_id=1)
+
+        buttons = [
+            [InlineKeyboardButton(
+                '• ᴊᴏɪɴ ᴍʏ ᴜᴘᴅᴀᴛᴇs •',
+                url='https://t.me/Unroder'
+            )],
+            [InlineKeyboardButton(
+                f'• ᴊᴏɪɴ {chat.title} •',
+                url=message_link
+            )]
+        ]
+        markup = InlineKeyboardMarkup(buttons)
+
+        caption = (
+            f"ʏᴏᴜʀ ʀᴇǫᴜᴇsᴛ ᴛᴏ ᴊᴏɪɴ "
+            f"<b>{chat.title}</b> ɪs ᴀᴘᴘʀᴏᴠᴇᴅ.\n"
+            f"‣ ᴘᴏᴡᴇʀᴇᴅ ʙʏ @Unrated_Coder"
+        )
+
+        await client.send_photo(
+            chat_id=user.id,
+            photo=START_PIC,
+            caption=caption,
+            reply_markup=markup
+        )
+    except Exception as e:
+        print(f"[BAM approval] Failed to send approval notice to {user.id}: {e}")
+# ══════════════════════════════════════════════════════════════
 
 
 def _bam_targets():
@@ -83,10 +125,12 @@ async def on_chat_join_request(client: Client, request: ChatJoinRequest):
         if info and info.get("is_bam"):
             is_bam = True
 
+    # ★ BAM flow — DO NOT auto-approve. Notify admins instead.
     if is_bam:
         await _notify_admins_bam(client, chat, user, request)
         return
 
+    # ── Normal auto-approval flow (unchanged) ──
     if not AUTO_APPROVE_ENABLED:
         return
 
@@ -168,6 +212,7 @@ async def _notify_admins_bam(client: Client, chat, user, request: ChatJoinReques
 
 @Client.on_callback_query(filters.regex(r"^bam_(ap|dc)_(-?\d+)_(-?\d+)$"))
 async def bam_callback(client: Client, query: CallbackQuery):
+    # ── Authorization: only owner / listed admins / DB admins ──
     uid = query.from_user.id
     authorized = (uid == OWNER_ID) or (uid in ADMINS) or (await is_admin(uid))
     if not authorized:
@@ -185,32 +230,45 @@ async def bam_callback(client: Client, query: CallbackQuery):
 
     if action == "ap":
         try:
+            # 1) Actually approve the Telegram join request
             await client.approve_chat_join_request(chat_id=chat_id, user_id=user_id)
-            try:
-                member = await client.get_chat_member(chat_id, user_id)
-                target_user = member.user
-            except Exception:
-                target_user = None
+        except Exception as e:
+            # Approval failed → DO NOT send approval notice
+            return await query.answer(f"❌ Approval failed: {e}", show_alert=True)
 
-            # ⬇️ SAME welcome message as normal approve
-            if target_user and chat:
-                await send_welcome_message(client, target_user, chat)
+        # 2) Fetch the approved user object (needed for the notification)
+        target_user = None
+        try:
+            member = await client.get_chat_member(chat_id, user_id)
+            target_user = member.user
+        except Exception:
+            target_user = None
 
+        # ★★★ ADDED: send DEDICATED BAM approval notification ★★★
+        # (only reached if approve_chat_join_request() succeeded above)
+        if target_user and chat:
+            await send_bam_approval_message(client, target_user, chat)
+
+        # 3) Update admin's request message → remove buttons, mark approved
+        try:
+            base_text = query.message.text.html if query.message.text else ""
             new_text = (
-                query.message.text.html
+                base_text
                 + f"\n\n✅ <b>APPROVED</b> by <a href='tg://user?id={uid}'>admin</a>"
             )
             await query.message.edit_text(new_text, reply_markup=None)
-            await query.answer("✅ Approved!", show_alert=False)
-
         except Exception as e:
-            await query.answer(f"❌ Failed: {e}", show_alert=True)
+            print(f"[BAM] Failed to update admin message: {e}")
+
+        return await query.answer("✅ Approved!", show_alert=False)
 
     else:
+        # ── Decline branch ──
         try:
             await client.decline_chat_join_request(chat_id=chat_id, user_id=user_id)
+            base_text = query.message.text.html if query.message.text else ""
             new_text = (
-                query.message.text.html
+                base_text
                 + f"\n\n❌ <b>DECLINED</b> by <a href='tg://user?id={uid}'>admin</a>"
             )
             await query.message.edit_text(new_text, reply_markup=None)
