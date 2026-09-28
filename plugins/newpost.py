@@ -17,7 +17,6 @@ PAGE_SIZE = 6
 chat_info_cache = {}
 
 
-# ────────────── Helper: admin check for callbacks ──────────────
 async def _is_callback_admin(callback_query) -> bool:
     try:
         uid = callback_query.from_user.id
@@ -72,13 +71,17 @@ async def set_channel(client: Client, message: Message):
         await save_channel(channel_id)
         base64_invite = await save_encoded_link(channel_id)
         normal_link = f"https://t.me/{client.username}?start={base64_invite}"
+
         base64_request = await encode(str(channel_id))
         await save_encoded_link2(channel_id, base64_request)
         request_link = f"https://t.me/{client.username}?start=req_{base64_request}"
+        bam_link = f"https://t.me/{client.username}?start=bamreq_{base64_request}"
+
         reply_text = (
             f"<b><blockquote expandable>✅ Cʜᴀᴛ {chat.title} ({channel_id}) ʜᴀs ʙᴇᴇɴ ᴀᴅᴅᴇᴅ sᴜᴄᴄᴇssғᴜʟʟʏ.</b>\n\n"
             f"<b>🔗 Nᴏʀᴍᴀʟ Lɪɴᴋ:</b> <code>{normal_link}</code>\n"
-            f"<b>🔗 Rᴇǫᴜᴇsᴛ Lɪɴᴋ:</b> <code>{request_link}</code>"
+            f"<b>🔗 Rᴇǫᴜᴇsᴛ Lɪɴᴋ:</b> <code>{request_link}</code>\n"
+            f"<b>🔗 BAM Rᴇǫᴜᴇsᴛ Lɪɴᴋ:</b> <code>{bam_link}</code>"
         )
         return await message.reply(reply_text)
 
@@ -175,7 +178,6 @@ async def send_channel_page(client, message, channels, page, edit=False):
 
 @Client.on_callback_query(filters.regex(r"^channelpage_(\d+)$"), group=-1)
 async def paginate_channels(client: Client, callback_query):
-    # 🔒 Admin-only check
     if not await _is_callback_admin(callback_query):
         return await callback_query.answer("❌ Admin only!", show_alert=True)
 
@@ -269,7 +271,6 @@ async def send_request_page(client, message, channels, page, edit=False):
 
 @Client.on_callback_query(filters.regex(r"^reqpage_(\d+)$"), group=-1)
 async def paginate_requests(client: Client, callback_query):
-    # 🔒 Admin-only check
     if not await _is_callback_admin(callback_query):
         return await callback_query.answer("❌ Admin only!", show_alert=True)
 
@@ -344,10 +345,12 @@ async def send_links_page(client, message, channels, page, edit=False):
             await save_encoded_link2(channel_id, base64_request)
             normal_link = f"https://t.me/{client.username}?start={base64_invite}"
             request_link = f"https://t.me/{client.username}?start=req_{base64_request}"
+            bam_link = f"https://t.me/{client.username}?start=bamreq_{base64_request}"
 
             links_text += f"<b>{idx}. {chat_info.title}</b>\n"
             links_text += f"<b>➥ Nᴏʀᴍᴀʟ:</b> <code>{normal_link}</code>\n"
-            links_text += f"<b>➤ Rᴇǫᴜᴇsᴛ:</b> <code>{request_link}</code>\n\n"
+            links_text += f"<b>➤ Rᴇǫᴜᴇsᴛ:</b> <code>{request_link}</code>\n"
+            links_text += f"<b>➤ BAM Rᴇǫᴜᴇsᴛ:</b> <code>{bam_link}</code>\n\n"
 
         except Exception as e:
             print(f"Error for channel {channel_id}: {e}")
@@ -378,7 +381,6 @@ async def send_links_page(client, message, channels, page, edit=False):
 
 @Client.on_callback_query(filters.regex(r"^linkspage_(\d+)$"), group=-1)
 async def paginate_links(client: Client, callback_query):
-    # 🔒 Admin-only check
     if not await _is_callback_admin(callback_query):
         return await callback_query.answer("❌ Admin only!", show_alert=True)
 
@@ -414,14 +416,19 @@ async def bulk_link(client: Client, message: Message):
         try:
             channel_id = int(id_str)
             chat = await client.get_chat(channel_id)
+
             base64_invite = await save_encoded_link(channel_id)
             normal_link = f"https://t.me/{client.username}?start={base64_invite}"
+
             base64_request = await encode(str(channel_id))
             await save_encoded_link2(channel_id, base64_request)
             request_link = f"https://t.me/{client.username}?start=req_{base64_request}"
+            bam_link = f"https://t.me/{client.username}?start=bamreq_{base64_request}"
+
             reply_text += f"<b>{idx}. {chat.title} ({channel_id})</b>\n"
             reply_text += f"<b>➥ Nᴏʀᴍᴀʟ:</b> <code>{normal_link}</code>\n"
-            reply_text += f"<b>➤ Rᴇǫᴜᴇsᴛ:</b> <code>{request_link}</code>\n\n"
+            reply_text += f"<b>➤ Rᴇǫᴜᴇsᴛ:</b> <code>{request_link}</code>\n"
+            reply_text += f"<b>➤ BAM Rᴇǫᴜᴇsᴛ:</b> <code>{bam_link}</code>\n\n"
         except Exception as e:
             reply_text += f"<b>{idx}. Channel {id_str}</b> (Error: {e})\n\n"
     await message.reply(reply_text)
@@ -448,10 +455,12 @@ async def generate_link_command(client: Client, message: Message):
         )
         normal_link = f"https://t.me/{client.username}?start={base64_invite}"
         request_link = f"https://t.me/{client.username}?start=req_{base64_request}"
+        bam_link = f"https://t.me/{client.username}?start=bamreq_{base64_request}"
         reply_text = (
             f"<b>✅ Link stored and encoded successfully.</b>\n\n"
             f"<b>🔗 Normal Link:</b> <code>{normal_link}</code>\n"
-            f"<b>🔗 Request Link:</b> <code>{request_link}</code>"
+            f"<b>🔗 Request Link:</b> <code>{request_link}</code>\n"
+            f"<b>🔗 BAM Request Link:</b> <code>{bam_link}</code>"
         )
         await message.reply(reply_text)
     except Exception as e:
@@ -520,7 +529,6 @@ async def send_channel_ids_page(client, message, channels, page, edit=False):
 
 @Client.on_callback_query(filters.regex(r"^channelids_(\d+)$"), group=-1)
 async def paginate_channel_ids(client: Client, callback_query):
-    # 🔒 Admin-only check
     if not await _is_callback_admin(callback_query):
         return await callback_query.answer("❌ Admin only!", show_alert=True)
 
