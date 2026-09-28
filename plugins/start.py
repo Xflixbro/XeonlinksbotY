@@ -131,47 +131,33 @@ async def start_command(client: Client, message: Message):
                     parse_mode=ParseMode.HTML
                 )
 
+            # ★ FIX: Always create a FRESH invite link per user.
+            # No sharing/reuse → each user's revoke task only kills their own link.
             async with channel_locks[channel_id]:
-                old_link_info = await get_current_invite_link(channel_id)
-                current_time = datetime.now()
+                # Use UTC to stay consistent with DB timestamps
+                current_time = datetime.utcnow()
 
-                if old_link_info:
-                    link_created_time = await get_link_creation_time(channel_id)
-                    same_type = (
-                        old_link_info.get("is_request", False) == is_request
-                        and old_link_info.get("is_bam", False) == is_bam
-                    )
-                    if (
-                        link_created_time
-                        and (current_time - link_created_time).total_seconds() < 240
-                        and same_type
-                    ):
-                        invite_link = old_link_info["invite_link"]
-                    else:
+                # Best-effort revoke of previously stored link (its own revoke task may also fire later — harmless)
+                try:
+                    old_link_info = await get_current_invite_link(channel_id)
+                    if old_link_info and old_link_info.get("invite_link"):
                         try:
                             await client.revoke_chat_invite_link(
                                 channel_id, old_link_info["invite_link"]
                             )
                         except Exception:
                             pass
+                except Exception:
+                    pass
 
-                        invite = await client.create_chat_invite_link(
-                            chat_id=channel_id,
-                            expire_date=current_time + timedelta(minutes=10),
-                            creates_join_request=is_request
-                        )
-                        invite_link = invite.invite_link
-                        await save_invite_link(channel_id, invite_link, is_request, is_bam)
-                        await register_invite_link(invite_link, channel_id, is_request, is_bam)
-                else:
-                    invite = await client.create_chat_invite_link(
-                        chat_id=channel_id,
-                        expire_date=current_time + timedelta(minutes=10),
-                        creates_join_request=is_request
-                    )
-                    invite_link = invite.invite_link
-                    await save_invite_link(channel_id, invite_link, is_request, is_bam)
-                    await register_invite_link(invite_link, channel_id, is_request, is_bam)
+                invite = await client.create_chat_invite_link(
+                    chat_id=channel_id,
+                    expire_date=current_time + timedelta(minutes=10),
+                    creates_join_request=is_request
+                )
+                invite_link = invite.invite_link
+                await save_invite_link(channel_id, invite_link, is_request, is_bam)
+                await register_invite_link(invite_link, channel_id, is_request, is_bam)
 
             if is_bam:
                 button_text = "• 📩 Send Join Request •"
@@ -193,6 +179,8 @@ async def start_command(client: Client, message: Message):
             )
             asyncio.create_task(delete_after_delay(note_msg, 300))
 
+            # ★ 5-minute revoke task KEPT — but now safe because
+            # each user has their OWN unique invite link.
             asyncio.create_task(
                 revoke_invite_after_5_minutes(client, channel_id, invite_link, is_request)
             )
