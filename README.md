@@ -1,5 +1,5 @@
 <p align="center">
-  <a href="https://github.com/Unrated-Coder/Unrated-LinkShare-Bot" target="_blank">
+  <a href="https://github.com/Unrated-Coder/Unrated-LinkShare-ot" target="_blank">
     <img src="https://imgyx.pages.dev/Qzjvg" width="100%" style="border-radius: 20px; border: 3px solid #00BFFF; box-shadow: 0 8px 30px rgba(0, 191, 255, 0.4);" alt="Unrated-LinkShare-Bot Header" />
   </a>
 </p>
