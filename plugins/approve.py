@@ -192,42 +192,9 @@ async def bam_callback(client: Client, query: CallbackQuery):
             except Exception:
                 target_user = None
 
+            # ⬇️ SAME welcome message as normal approve
             if target_user and chat:
-                # BAM: send a dedicated approval notification to the user
-                try:
-                    message_link = build_message_link(chat.id, message_id=1)
-
-                    buttons = [
-                        [
-                            InlineKeyboardButton(
-                                '• ᴊᴏɪɴ ᴍʏ ᴜᴘᴅᴀᴛᴇs •',
-                                url='https://t.me/Unroder'
-                            )
-                        ],
-                        [
-                            InlineKeyboardButton(
-                                f'• ᴊᴏɪɴ {chat.title} •',
-                                url=message_link
-                            )
-                        ]
-                    ]
-
-                    markup = InlineKeyboardMarkup(buttons)
-
-                    caption = (
-                        f"ʏᴏᴜʀ ʀᴇǫᴜᴇsᴛ ᴛᴏ ᴊᴏɪɴ "
-                        f"<b>{chat.title}</b> ɪs ᴀᴘᴘʀᴏᴠᴇᴅ.\n"
-                        f"‣ ᴘᴏᴡᴇʀᴇᴅ ʙʏ @Unrated_Coder"
-                    )
-
-                    await client.send_photo(
-                        chat_id=target_user.id,
-                        photo=START_PIC,
-                        caption=caption,
-                        reply_markup=markup
-                    )
-                except Exception as e:
-                    print(f"[BAM] Failed to send approval notification to {user_id}: {e}")
+                await send_welcome_message(client, target_user, chat)
 
             new_text = (
                 query.message.text.html
